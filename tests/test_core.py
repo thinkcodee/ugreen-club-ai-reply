@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
@@ -1926,6 +1927,230 @@ class GuideModeTest(unittest.TestCase):
             cfg = m.Config.from_env(args)
         self.assertEqual(cfg.guide_pages, 3)
         self.assertEqual(cfg.guide_limit, 40)
+
+
+# ===========================================================================
+# 每日配额
+# ===========================================================================
+
+class DailyQuotaTest(unittest.TestCase):
+    """每日发送配额：跨运行累计、用满即整轮跳过、可配置为不限制。"""
+
+    @staticmethod
+    def _cfg(env=None, argv=None):
+        args = m.build_parser().parse_args(argv or [])
+        with patch.dict(os.environ, env or {}, clear=True):
+            return m.Config.from_env(args)
+
+    def test_default_quota_is_ten(self):
+        self.assertEqual(self._cfg().daily_quota, 10)
+
+    def test_quota_from_env(self):
+        self.assertEqual(self._cfg({"UGREEN_DAILY_QUOTA": "3"}).daily_quota, 3)
+        self.assertEqual(self._cfg({"UGREEN_DAILY_QUOTA": "0"}).daily_quota, 0)
+
+    def test_quota_cli_overrides_env(self):
+        cfg = self._cfg({"UGREEN_DAILY_QUOTA": "3"}, ["--daily-quota", "8"])
+        self.assertEqual(cfg.daily_quota, 8)
+        cfg0 = self._cfg({"UGREEN_DAILY_QUOTA": "3"}, ["--daily-quota", "0"])
+        self.assertEqual(cfg0.daily_quota, 0)
+
+    def test_negative_quota_falls_back_to_unlimited(self):
+        self.assertEqual(self._cfg({"UGREEN_DAILY_QUOTA": "-5"}).daily_quota, 0)
+
+    def test_daily_used_and_bump(self):
+        state = {}
+        self.assertEqual(m.daily_used(state, "2026-11-17"), 0)
+        self.assertEqual(m.bump_daily_used(state, "2026-11-17"), 1)
+        self.assertEqual(m.bump_daily_used(state, "2026-11-17", 2), 3)
+        self.assertEqual(m.daily_used(state, "2026-11-17"), 3)
+        # 别的日期互不影响
+        self.assertEqual(m.daily_used(state, "2026-11-18"), 0)
+
+    def test_daily_used_survives_broken_state(self):
+        self.assertEqual(m.daily_used({}, "2026-11-17"), 0)
+        self.assertEqual(m.daily_used({"daily": "坏数据"}, "2026-11-17"), 0)
+        self.assertEqual(m.daily_used({"daily": {"2026-11-17": "abc"}},
+                                      "2026-11-17"), 0)
+        self.assertEqual(m.daily_used({"daily": {"2026-11-17": -3}},
+                                      "2026-11-17"), 0)
+
+    def test_bump_prunes_old_days(self):
+        state = {"daily": {f"2026-01-{d:02d}": 3 for d in range(1, 29)}}
+        state["daily"].update({f"2026-02-{d:02d}": 1 for d in range(1, 13)})
+        m.bump_daily_used(state, "2026-11-17")
+        self.assertEqual(len(state["daily"]), m.DAILY_KEEP_DAYS)
+        self.assertIn("2026-11-17", state["daily"])
+        self.assertNotIn("2026-01-01", state["daily"])
+
+    def test_bump_repairs_broken_value(self):
+        state = {"daily": {"2026-11-17": "坏数据"}}
+        self.assertEqual(m.bump_daily_used(state, "2026-11-17"), 1)
+
+
+class DailyQuotaFlowTest(unittest.TestCase):
+    """实发模式下的每日配额：整轮跳过 / 剩余额度截断 / 计数落盘。"""
+
+    # 每条回复内容必须互不相同，否则会被「与近期已发回复高度重复」闸门拦下
+    _replies = {
+        "9101": "先确认容器端口是否真的监听，再看宿主机映射和防火墙规则是否放通。",
+        "9201": "先确认容器端口是否真的监听，再看宿主机映射和防火墙规则是否放通。",
+        "9202": "换个思路：进容器手动 curl 本机端口，能通就说明网络链路没问题。",
+        "9203": "建议改用桥接网络并在 compose 里显式写出对外端口，然后重建容器再验证。",
+        "9204": "这类情况多半是容器内部服务没起来，看 logs 里的启动报错更快定位。",
+        "9301": "先确认容器端口是否真的监听，再看宿主机映射和防火墙规则是否放通。",
+        "9302": "换个思路：进容器手动 curl 本机端口，能通就说明网络链路没问题。",
+        "9303": "建议改用桥接网络并在 compose 里显式写出对外端口，然后重建容器再验证。",
+        "9401": "先确认容器端口是否真的监听，再看宿主机映射和防火墙规则是否放通。",
+    }
+
+    class _Resp:
+        status_code = 200
+        text = ""
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def json(self):
+            return {"choices": [{"message": {
+                "content": json.dumps(self.payload, ensure_ascii=False)}}]}
+
+    @staticmethod
+    def _thread(tid, title, minutes=10):
+        t = m.Thread(tid=tid, title=title, fid=14, forum="Docker",
+                     content="容器起来了但网页打不开",
+                     published=datetime.now() - timedelta(minutes=minutes))
+        return t
+
+    def _fake_ai(self, url, **kwargs):
+        body = kwargs.get("json") or {}
+        text = body["messages"][1]["content"]
+        tids = re.findall(r'"tid":\s*"(\d+)"', text)
+        rows = []
+        for tid in tids:
+            rows.append({"tid": tid, "should_reply": True, "kind": "text",
+                         "reply": self._replies[tid],
+                         "reason": "具体报错",
+                         "answer_mode": "probe", "confidence": "low",
+                         "evidence_used": []})
+        return self._Resp({"results": rows})
+
+    def _run_live(self, tmpdir, state, threads, extra_env=None, argv=None):
+        """跑一次实发 main()，返回 (退出码, 输出, 发帖记录)。"""
+        state_path = Path(tmpdir) / "ugreen_state.json"
+        state_path.write_text(json.dumps(state, ensure_ascii=False),
+                              encoding="utf-8")
+        env = {"AI_API_KEY": "test-key",
+               "AI_BASE_URL": "http://127.0.0.1:9/v1",
+               "UGREEN_COOKIE": "fake-cookie",
+               "UGREEN_DRY_RUN": "0", "UGREEN_NOTIFY": "0",
+               "UGREEN_STATE_DIR": str(tmpdir),
+               "UGREEN_SEARCH": "0",
+               "UGREEN_MIN_DELAY": "0", "UGREEN_MAX_DELAY": "0"}
+        env.update(extra_env or {})
+        posted = []
+
+        def fake_post_reply(self, t, message):
+            posted.append((t.tid, message))
+            return True, "", "回复发布成功"
+
+        def fake_detail(self, t, floors=None):
+            t.can_reply = True
+            t.detail_ok = True
+            t.formhash = "hash"
+            t.reply_action = "https://club.ugnas.com/post.php"
+            return t
+
+        buf = io.StringIO()
+        argv = argv or ["ugreen_ai_reply.py", "--hours", "48",
+                        "--per-forum", "10", "--no-notify"]
+        with patch.dict(os.environ, env, clear=True), \
+                patch.object(m.UgnasClient, "check_login", return_value=True), \
+                patch.object(m.UgnasClient, "fetch_rss", return_value=threads), \
+                patch.object(m.UgnasClient, "fetch_guide", return_value=threads), \
+                patch.object(m.UgnasClient, "fetch_detail", fake_detail), \
+                patch.object(m.UgnasClient, "post_reply", fake_post_reply), \
+                patch.object(m.requests, "post", side_effect=self._fake_ai), \
+                patch.object(sys, "argv", argv), \
+                redirect_stdout(buf):
+            rc = m.main()
+        return rc, buf.getvalue(), posted, state_path
+
+    def test_quota_exhausted_skips_whole_run(self):
+        today = datetime.now().strftime("%Y-%m-%d")
+        threads = [self._thread("9101", "Docker 容器端口映射失败求助")]
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, out, posted, _ = self._run_live(
+                tmp, {"daily": {today: 10}}, threads,
+                extra_env={"UGREEN_DAILY_QUOTA": "10"})
+        self.assertEqual(rc, 0)
+        self.assertEqual(posted, [])
+        self.assertIn("今日配额已用满", out)
+        self.assertIn("10/10", out)
+
+    def test_remaining_quota_truncates_run(self):
+        """今日已用 8 条、配额 10 条、单次上限 5 → 本次只能发 2 条。"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        threads = [self._thread("9201", "Docker 容器端口映射失败求助 A"),
+                   self._thread("9202", "Docker 容器端口映射失败求助 B"),
+                   self._thread("9203", "Docker 容器端口映射失败求助 C"),
+                   self._thread("9204", "Docker 容器端口映射失败求助 D")]
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, out, posted, state_path = self._run_live(
+                tmp, {"daily": {today: 8}}, threads,
+                extra_env={"UGREEN_DAILY_QUOTA": "10", "UGREEN_MAX_REPLIES": "5"})
+            self.assertEqual(rc, 0)
+            self.assertEqual(len(posted), 2)
+            self.assertIn("本次最多发 2 条", out)
+            saved = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["daily"][today], 10)
+
+    def test_unlimited_quota_ignores_daily_counter(self):
+        """UGREEN_DAILY_QUOTA=0 时不受每日计数约束。"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        threads = [self._thread("9301", "Docker 容器端口映射失败求助 A"),
+                   self._thread("9302", "Docker 容器端口映射失败求助 B"),
+                   self._thread("9303", "Docker 容器端口映射失败求助 C")]
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, out, posted, state_path = self._run_live(
+                tmp, {"daily": {today: 99}}, threads,
+                extra_env={"UGREEN_DAILY_QUOTA": "0", "UGREEN_MAX_REPLIES": "3"})
+            self.assertEqual(rc, 0)
+            self.assertEqual(len(posted), 3)
+            self.assertIn("每日配额：不限制", out)
+            saved = json.loads(state_path.read_text(encoding="utf-8"))
+            # 不限制时也照常记账（99 + 3），方便以后改回限制
+            self.assertEqual(saved["daily"][today], 102)
+
+    def test_dry_run_does_not_consume_quota(self):
+        """演练模式既不消耗配额，也不受配额限制。"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        threads = [self._thread("9401", "Docker 容器端口映射失败求助 A")]
+        state_path = Path(tempfile.mkdtemp()) / "ugreen_state.json"
+        state_path.write_text(json.dumps({"daily": {today: 10}},
+                                         ensure_ascii=False), encoding="utf-8")
+        env = {"AI_API_KEY": "test-key",
+               "AI_BASE_URL": "http://127.0.0.1:9/v1",
+               "UGREEN_DRY_RUN": "1", "UGREEN_NOTIFY": "0",
+               "UGREEN_STATE_DIR": str(state_path.parent),
+               "UGREEN_SEARCH": "0", "UGREEN_DAILY_QUOTA": "10"}
+        argv = ["ugreen_ai_reply.py", "--hours", "48", "--per-forum", "10",
+                "--no-notify", "--no-mark"]
+        buf = io.StringIO()
+        with patch.dict(os.environ, env, clear=True), \
+                patch.object(m.UgnasClient, "fetch_rss", return_value=threads), \
+                patch.object(m.UgnasClient, "fetch_guide", return_value=threads), \
+                patch.object(m.UgnasClient, "fetch_detail",
+                             side_effect=lambda t: t), \
+                patch.object(m.requests, "post", side_effect=self._fake_ai), \
+                patch.object(sys, "argv", argv), \
+                redirect_stdout(buf):
+            rc = m.main()
+        out = buf.getvalue()
+        self.assertEqual(rc, 0)
+        # 演练照常给出拟回复，不被配额拦下
+        self.assertIn("演练：未发送", out)
+        self.assertIn("演练不占用配额", out)
 
 
 if __name__ == "__main__":

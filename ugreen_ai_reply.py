@@ -906,6 +906,9 @@ class Config:
     hours: float = 24.0
     max_detail: int = 30
     max_replies: int = 5
+    # 每日回复配额（跨运行累计，按服务器本地自然日）：0 = 不限制。
+    # 计数写在状态文件里，只有实发成功才计数；用满了就整轮跳过。
+    daily_quota: int = 10
     per_forum_limit: int = 4
     allow_emoji_reply: bool = True
     dry_run: bool = True
@@ -1040,6 +1043,8 @@ class Config:
         cfg.hours = env_float("UGREEN_HOURS", 24.0)
         cfg.max_detail = max(1, env_int("UGREEN_MAX_DETAIL", 30))
         cfg.max_replies = max(1, env_int("UGREEN_MAX_REPLIES", 5))
+        # 每日配额：0 = 不限制（只受单次 UGREEN_MAX_REPLIES 约束）
+        cfg.daily_quota = max(0, env_int("UGREEN_DAILY_QUOTA", 10))
         cfg.per_forum_limit = max(1, env_int("UGREEN_PER_FORUM_LIMIT", 4))
         cfg.allow_emoji_reply = env_bool("UGREEN_ALLOW_EMOJI_REPLY", True)
         cfg.dry_run = env_bool("UGREEN_DRY_RUN", True)
@@ -1199,6 +1204,8 @@ class Config:
             cfg.hours = args.hours
         if args.limit is not None:
             cfg.max_replies = args.limit
+        if args.daily_quota is not None:
+            cfg.daily_quota = max(0, args.daily_quota)
         if args.per_forum is not None:
             cfg.per_forum_limit = max(1, args.per_forum)
         if args.detail_limit is not None:
@@ -2896,14 +2903,52 @@ def load_state(cfg: Config) -> dict:
     return {}
 
 
-def save_state(cfg: Config, state: dict, now: datetime) -> None:
+DAILY_KEEP_DAYS = 30
+
+
+def daily_used(state: dict, day: str) -> int:
+    """今天（自然日，服务器本地时间）已经实发成功多少条回复。
+
+    计数只统计「发送成功」的回复；失败的请求不占配额。
+    """
+    daily = state.get("daily")
+    if not isinstance(daily, dict):
+        return 0
+    try:
+        return max(0, int(daily.get(day, 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def bump_daily_used(state: dict, day: str, n: int = 1) -> int:
+    """把今天的发送计数 +n，并顺手清掉太老的日期，避免状态文件无限膨胀。
+
+    返回更新后的今日计数。
+    """
+    daily = state.get("daily")
+    if not isinstance(daily, dict):
+        daily = {}
+    try:
+        cur = max(0, int(daily.get(day, 0)))
+    except (TypeError, ValueError):
+        cur = 0
+    daily[day] = cur + max(0, n)
+    # 日期是 YYYY-MM-DD，字典序即时间序，保留最近 DAILY_KEEP_DAYS 天
+    state["daily"] = {k: daily[k] for k in sorted(daily)[-DAILY_KEEP_DAYS:]}
+    return daily[day]
+
+
+def save_state(cfg: Config, state: dict, now: datetime,
+               quiet: bool = False, update_last_run: bool = True) -> None:
     try:
         cfg.state_dir.mkdir(parents=True, exist_ok=True)
-        state["last_run"] = now.strftime("%Y-%m-%d %H:%M:%S")
+        if update_last_run:
+            state["last_run"] = now.strftime("%Y-%m-%d %H:%M:%S")
         state["recent_replies"] = state.get("recent_replies", [])[-50:]
         cfg.state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2),
                                   encoding="utf-8")
-        log(f"状态已写入 {cfg.state_file}")
+        if not quiet:
+            log(f"状态已写入 {cfg.state_file}")
     except Exception as exc:  # noqa: BLE001
         log(f"状态写入失败：{exc}")
 
@@ -3010,20 +3055,26 @@ def send_notification(title: str, content: str) -> None:
 
 def render_report(results: list[dict], cfg: Config,
                   since: datetime, now: datetime,
-                  candidates: int, ai_mode: str) -> str:
+                  candidates: int, ai_mode: str,
+                  run_limit: Optional[int] = None,
+                  used_today: int = 0) -> str:
     if cfg.use_guide:
         source_line = (f"来源：论坛导读（不区分板块，发布时间倒序，"
                        f"取最新 ≤{cfg.guide_limit} 篇）")
     else:
         source_line = (f"板块：{', '.join(DEFAULT_FORUMS.get(f, str(f)) for f in cfg.fids)}"
                        f"（每板块各取最新 {cfg.per_forum_limit} 篇）")
+    limit = cfg.max_replies if run_limit is None else run_limit
     L = ["=" * 68,
          "绿联 NAS 社区 · AI 自动回复",
          f"窗口：{since:%m-%d %H:%M} ~ {now:%m-%d %H:%M}   "
          f"模式：{'演练（不发帖）' if cfg.dry_run else '实发'}   AI：{ai_mode}",
          source_line,
-         f"候选 {candidates} 篇 / 处理 {len(results)} 篇 / 上限 {cfg.max_replies} 条回复"
+         f"候选 {candidates} 篇 / 处理 {len(results)} 篇 / 上限 {limit} 条回复"
          f" / 表情回复 {'允许' if cfg.allow_emoji_reply else '禁用'}",
+         (f"每日配额：{used_today}/{cfg.daily_quota} 条"
+          f"（{'演练不占用' if cfg.dry_run else '实发成功才计数'}）")
+         if cfg.daily_quota > 0 else "每日配额：不限制",
          f"上下文：已有楼层 ≤{cfg.max_floors} 楼 / 检索 "
          f"{'开' if cfg.search_ready else '关'}"
          f"（{', '.join(cfg.search_providers) or '无'}） / 保守模式 "
@@ -3113,6 +3164,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="绿联 NAS 社区 · 六板块 AI 自动回复")
     ap.add_argument("--hours", type=float, default=None, help="只看最近 N 小时的新帖")
     ap.add_argument("--limit", type=int, default=None, help="本次最多发几条回复")
+    ap.add_argument("--daily-quota", type=int, default=None,
+                    help="每天最多发几条回复（默认 10，0 = 不限制）")
     ap.add_argument("--per-forum", type=int, default=None,
                     help="每个板块各取最新几篇（默认 4）")
     ap.add_argument("--detail-limit", type=int, default=None, help="最多抓多少篇详情")
@@ -3178,6 +3231,23 @@ def main() -> int:
     replied = set((state.get("replied") or {}).keys())
     recent = list(state.get("recent_replies") or [])
 
+    # ---- 每日配额：跨运行累计，按本地自然日 ----
+    today = now.strftime("%Y-%m-%d")
+    used_today = daily_used(state, today)
+    if cfg.daily_quota > 0:
+        quota_left = max(0, cfg.daily_quota - used_today)
+        # 本次实发上限 = 单次上限 与 今日剩余配额 取小
+        run_limit = min(cfg.max_replies, quota_left)
+    else:
+        quota_left = -1          # -1 表示不限制
+        run_limit = cfg.max_replies
+    if cfg.dry_run:
+        # 演练不发帖，既不消耗配额也不受配额限制
+        run_limit = cfg.max_replies
+        quota_exhausted = False
+    else:
+        quota_exhausted = cfg.daily_quota > 0 and quota_left == 0
+
     if cfg.use_guide:
         source_desc = (f"来源=论坛导读（不区分板块，发布时间倒序，"
                        f"≤{cfg.guide_limit} 篇 / {cfg.guide_pages} 页）")
@@ -3188,6 +3258,29 @@ def main() -> int:
         f"回复上限={cfg.max_replies}，"
         f"表情回复={'允许' if cfg.allow_emoji_reply else '禁用'}，"
         f"AI={'已启用' if cfg.use_ai else '未启用'}")
+    if cfg.daily_quota > 0:
+        log(f"每日配额 {cfg.daily_quota} 条：今日已用 {used_today} 条，"
+            f"剩余 {quota_left} 条"
+            + (f"，本次最多发 {run_limit} 条" if not cfg.dry_run else "（演练不占用配额）"))
+        if quota_exhausted:
+            log(f"今日配额已用满（{used_today}/{cfg.daily_quota}），"
+                f"本次不再抓帖、不再发帖")
+        if not cfg.dry_run and not cfg.mark_state:
+            log("注意：本次禁用了写状态文件（--no-mark / UGREEN_MARK_STATE=0），"
+                "每日配额无法累计，配额不会生效")
+    else:
+        log("每日配额：不限制（UGREEN_DAILY_QUOTA=0）")
+
+    # 配额用满：整轮跳过，连帖子都不抓，避免无谓请求
+    if quota_exhausted:
+        if cfg.notify:
+            send_notification(
+                f"绿联社区 AI 回复：今日配额已满",
+                f"今日已发 {used_today}/{cfg.daily_quota} 条，本次未执行。\n"
+                f"可调 UGREEN_DAILY_QUOTA 调整上限，或等下一个自然日。")
+        if cfg.mark_state:
+            save_state(cfg, state, now)
+        return 0
     log(f"上下文：已有楼层={'抓取' if cfg.fetch_replies else '不抓'}"
         f"（≤{cfg.max_floors} 楼），"
         f"检索={'开启' if cfg.search_ready else '关闭'}"
@@ -3450,7 +3543,7 @@ def main() -> int:
             "revisit": t.revisit,
             "revisit_reason": t.revisit_reason,
         }
-        if sent >= cfg.max_replies:
+        if sent >= run_limit:
             results.append({"thread": t, "skip": "已达本次回复上限",
                             "reply": reply, "emoji": is_emoji, **meta})
             continue
@@ -3496,15 +3589,23 @@ def main() -> int:
                 "revisit": bool(t.revisit),
             }
             recent.append(reply)
-            if sent < cfg.max_replies:
+            # 每日配额只统计实发成功的回复
+            used_today = bump_daily_used(state, today)
+            if cfg.daily_quota > 0:
+                log(f"  今日配额 {used_today}/{cfg.daily_quota} 条")
+            # 每发成功一条就立刻落盘：中途被青龙超时杀掉也不丢配额和已回复记录
+            if cfg.mark_state:
+                save_state(cfg, state, now, quiet=True, update_last_run=False)
+            if sent < run_limit:
                 # 随机间隔，模拟真人节奏、降低被风控的概率
                 delay = random.randint(cfg.min_delay, cfg.max_delay)
-                left = cfg.max_replies - sent
+                left = run_limit - sent
                 log(f"  等待 {delay} 秒后继续 "
                     f"（回复间隔随机，剩余名额 {left} 条）...")
                 time.sleep(delay)
 
-    report = render_report(results, cfg, since, now, len(fresh), ai_mode)
+    report = render_report(results, cfg, since, now, len(fresh), ai_mode,
+                           run_limit=run_limit, used_today=used_today)
     print("\n" + report + "\n")
 
     if cfg.notify:
