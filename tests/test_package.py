@@ -377,6 +377,75 @@ class DependencyDeclarationTest(unittest.TestCase):
                             f"命令行入口 {cmd} 与包名不一致")
 
 
+class LicenseTest(unittest.TestCase):
+    """许可证文件必须存在、合法、且与各处声明一致。"""
+
+    def setUp(self):
+        self.license = ROOT / "LICENSE"
+        self.text = (self.license.read_text(encoding="utf-8")
+                     if self.license.exists() else "")
+
+    def test_license_file_exists(self):
+        self.assertTrue(self.license.exists(),
+                        "仓库根目录缺少 LICENSE 文件")
+        self.assertGreater(len(self.text), 1000,
+                           "LICENSE 内容异常短，可能不是完整许可证全文")
+
+    def test_license_is_mit(self):
+        """必须是标准 MIT 全文（关键条款都在）。"""
+        self.assertIn("MIT License", self.text)
+        for clause in (
+            "Permission is hereby granted, free of charge",
+            "without restriction",
+            "The above copyright notice and this permission notice",
+            "THE SOFTWARE IS PROVIDED \"AS IS\"",
+            "WITHOUT WARRANTY OF ANY KIND",
+        ):
+            self.assertIn(clause, self.text, f"LICENSE 缺少 MIT 条款：{clause}")
+
+    def test_license_has_copyright_holder(self):
+        self.assertRegex(self.text, r"Copyright \(c\) \d{4}.+\S",
+                         "LICENSE 缺少版权人与年份")
+
+    def test_pyproject_license_matches_file(self):
+        """pyproject 声明的 license 必须指向这个文件，且该文件是 MIT。"""
+        data = load_toml(ROOT / "pyproject.toml")
+        lic = data["project"].get("license")
+        self.assertIsNotNone(lic, "pyproject.toml 未声明 license")
+
+        # license = { file = "LICENSE" } 或 license = { text = "MIT" }
+        if isinstance(lic, dict) and "file" in lic:
+            path = ROOT / lic["file"]
+            self.assertTrue(path.exists(),
+                            f"pyproject 指向的许可证文件不存在：{path}")
+            self.assertIn("MIT License", path.read_text(encoding="utf-8"),
+                          f"{path} 不是 MIT 许可证")
+        else:
+            self.assertIn("MIT", str(lic),
+                          f"pyproject 的 license 声明不是 MIT：{lic}")
+
+    def test_single_file_carries_license(self):
+        """单文件是用户实际拿到手的产物，必须自带许可证声明。
+
+        青龙订阅只下载这一个 .py，没有 LICENSE 跟着走，
+        MIT 要求的「保留版权声明」就靠单文件末尾那块注释。
+        """
+        src = SINGLE.read_text(encoding="utf-8")
+        self.assertIn("MIT License", src,
+                      "单文件里没有许可证声明")
+        self.assertIn("Copyright (c)", src,
+                      "单文件里没有版权声明")
+        # 关键：许可证块必须在文件末尾（__main__ 入口之后）
+        self.assertGreater(src.rindex("MIT License"),
+                           src.rindex('if __name__ == "__main__"'),
+                           "单文件的许可证块应放在文件末尾")
+
+    def test_readme_has_license_section(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("MIT", readme, "README 没有提到 MIT 许可证")
+        self.assertIn("LICENSE", readme, "README 没有链接到 LICENSE 文件")
+
+
 class ModuleResponsibilityTest(unittest.TestCase):
     """各模块职责边界。"""
 

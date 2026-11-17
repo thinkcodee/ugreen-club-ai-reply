@@ -660,8 +660,9 @@ ugreen-club-ai-reply/
 ├── requirements.txt
 ├── config.example.env      # 环境变量样例
 ├── tests/test_core.py      # 179 项行为单测
-├── tests/test_package.py   # 16 项工程结构测试
+├── tests/test_package.py   # 29 项工程结构测试
 ├── knowledge/              # 可选：本地知识库 .md/.txt（需加 local 检索源）
+├── LICENSE                 # MIT 许可证
 └── README.md
 ```
 
@@ -717,10 +718,18 @@ core（常量/结构/配置）→ util（通用工具）→ forum / search / ai�
 
 | 工作流 | 触发 | 做什么 |
 | --- | --- | --- |
-| `ci.yml` | push / PR / 手动 | 在 Python 3.9 / 3.11 / 3.13 上跑 195 项测试，并校验单文件产物与源码一致。**产物过期会直接失败** |
+| `ci.yml` | push / PR / 手动 | 在 Python 3.9 / 3.11 / 3.13 上跑 208 项测试，并校验单文件产物与源码一致。**产物过期会直接失败** |
 | `build-single.yml` | 发布 Release / 手动 | 重新生成单文件、跑测试；发版时把产物上传到 Release 附件，手动触发时可选把改动提交回 `main` |
 
 手动触发构建：仓库 **Actions → 构建单文件产物 → Run workflow**。
 
 `ci.yml` 是「忘了构建」的最后一道防线——即使本地忘了跑 `build_single.py`，PR 也会被拦下。
+
+---
+
+## 九、许可证
+
+[MIT License](LICENSE) © 2026 thinkcodee
+
+自由使用、修改、分发、商用，保留版权声明即可。详见 [LICENSE](LICENSE) 文件。
 

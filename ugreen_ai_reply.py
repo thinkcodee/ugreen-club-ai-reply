@@ -21,6 +21,9 @@
      把检索到的片段作为证据注入 prompt，并要求回复标注引用了哪些证据。
 
 默认只演练不发帖。确认无误后设置 UGREEN_DRY_RUN=0 才会真正回复。
+
+许可证：MIT License © 2026 thinkcodee
+（单文件版内附许可证全文见文件末尾）
 """
 
 from __future__ import annotations
@@ -3644,3 +3647,29 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n已中断")
         sys.exit(130)
+
+
+# ==================================================================
+# 许可证（MIT License）—— 完整文本见仓库根目录的 LICENSE 文件
+# ==================================================================
+# MIT License
+#
+# Copyright (c) 2026 thinkcodee
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.

@@ -68,6 +68,9 @@ HEADER = '''#!/usr/bin/env python3
      把检索到的片段作为证据注入 prompt，并要求回复标注引用了哪些证据。
 
 默认只演练不发帖。确认无误后设置 UGREEN_DRY_RUN=0 才会真正回复。
+
+许可证：MIT License © 2026 thinkcodee
+（单文件版内附许可证全文见文件末尾）
 """
 '''
 
@@ -209,7 +212,26 @@ if __name__ == "__main__":
             + "\nfrom __future__ import annotations\n\n"
             + imports_block + "\n"
             + "\n\n".join(chunks)
-            + tail)
+            + tail
+            + license_block())
+
+
+def license_block() -> str:
+    """把 LICENSE 全文附到单文件末尾。
+
+    单文件是用户实际拿到手的东西（青龙订阅只下一个 .py），
+    附上许可证全文，MIT 的「保留版权声明」要求才算满足。
+    """
+    lic = ROOT / "LICENSE"
+    if not lic.exists():
+        return ""
+    text = lic.read_text(encoding="utf-8").rstrip("\n")
+    body = "\n".join(f"# {ln}" if ln.strip() else "#"
+                     for ln in text.splitlines())
+    return ("\n\n# " + "=" * 66 + "\n"
+            "# 许可证（MIT License）—— 完整文本见仓库根目录的 LICENSE 文件\n"
+            "# " + "=" * 66 + "\n"
+            + body + "\n")
 
 
 def main() -> int:
