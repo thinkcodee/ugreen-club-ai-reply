@@ -3281,6 +3281,15 @@ def main() -> int:
                         "outcome": ("发送成功" if posted else f"发送失败：{why}"),
                         "ai_reason": d.get("reason", ""), "ok": posted,
                         "emoji": is_emoji, **meta})
+        # 打印每条的发帖结果：否则实发时只看到「等待 N 秒」，
+        # 不知道刚才到底发了哪一条
+        mark = "✓" if posted else "✗"
+        snippet = clip_text(reply.replace("\n", " "), 40)
+        if posted:
+            log(f"  {mark} 已回复 tid={t.tid} [{t.forum}] {t.title} → {snippet}")
+        else:
+            log(f"  {mark} 发送失败 tid={t.tid} [{t.forum}] {t.title}"
+                f" → {why}")
         if posted:
             sent += 1
             if is_casual:
@@ -3294,8 +3303,11 @@ def main() -> int:
             }
             recent.append(reply)
             if sent < cfg.max_replies:
+                # 随机间隔，模拟真人节奏、降低被风控的概率
                 delay = random.randint(cfg.min_delay, cfg.max_delay)
-                log(f"  等待 {delay} 秒后继续 ...")
+                left = cfg.max_replies - sent
+                log(f"  等待 {delay} 秒后继续 "
+                    f"（回复间隔随机，剩余名额 {left} 条）...")
                 time.sleep(delay)
 
     report = render_report(results, cfg, since, now, len(fresh), ai_mode)
