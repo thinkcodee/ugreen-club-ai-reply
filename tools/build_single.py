@@ -73,7 +73,11 @@ HEADER = '''#!/usr/bin/env python3
 
 
 def strip_module(path: Path) -> tuple[list[str], list[str]]:
-    """返回 (顶层 import 语句, 其余代码)。"""
+    """返回 (顶层 import 语句, 其余代码)。
+
+    模块 docstring 不能直接留（单文件里只能有一个模块级 docstring），
+    但内容有用 —— 转成注释块保留，这样单文件里仍能看出每段代码的来路。
+    """
     src = path.read_text(encoding="utf-8")
     tree = ast.parse(src)
     lines = src.splitlines()
@@ -81,12 +85,14 @@ def strip_module(path: Path) -> tuple[list[str], list[str]]:
     imports: list[str] = []
     body_lines: list[str] = []
     skip_lines: set[int] = set()
+    docstring: str = ""
 
     for node in tree.body:
-        # 模块 docstring：整块跳过
+        # 模块 docstring：转成注释保留
         if (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
                 and isinstance(node.value.value, str)
                 and node is tree.body[0]):
+            docstring = node.value.value.strip()
             skip_lines.update(range(node.lineno, node.end_lineno + 1))
             continue
         if isinstance(node, ast.ImportFrom):
@@ -107,6 +113,9 @@ def strip_module(path: Path) -> tuple[list[str], list[str]]:
         if i in skip_lines:
             continue
         body_lines.append(ln)
+
+    if docstring:
+        body_lines = [f"# {d}" for d in docstring.splitlines()] + [""] + body_lines
 
     return imports, body_lines
 
