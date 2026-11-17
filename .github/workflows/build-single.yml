@@ -75,8 +75,17 @@ jobs:
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" \
+          # gh release upload 的签名是 <tag> <files>... [选项]，
+          # 不能在文件名后面直接跟说明文字 —— 会被当成第二个文件而报错。
+          # 文件说明要用 --notes 传。
+          if ! command -v gh >/dev/null 2>&1; then
+            echo "::error::找不到 gh CLI，无法上传产物到 Release"
+            exit 1
+          fi
+          gh release upload "$TAG_NAME" \
             ugreen_ai_reply.py \
             --clobber \
-            "# 单文件产物（青龙直接用这个）"
+            --notes "单文件产物（青龙直接用这个）"
