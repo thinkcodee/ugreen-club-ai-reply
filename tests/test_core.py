@@ -617,6 +617,7 @@ class MainFlowDryRunTest(unittest.TestCase):
         buf = io.StringIO()
         with patch.dict(os.environ, env, clear=True), \
                 patch.object(m.UgnasClient, "fetch_rss", return_value=threads), \
+                patch.object(m.UgnasClient, "fetch_guide", return_value=threads), \
                 patch.object(m.UgnasClient, "fetch_detail", side_effect=lambda t: t), \
                 patch.object(m.requests, "post", side_effect=fake_post), \
                 patch.object(sys, "argv", argv), \
@@ -671,6 +672,7 @@ class MainFlowDryRunTest(unittest.TestCase):
         buf = io.StringIO()
         with patch.dict(os.environ, env, clear=True), \
                 patch.object(m.UgnasClient, "fetch_rss", return_value=threads), \
+                patch.object(m.UgnasClient, "fetch_guide", return_value=threads), \
                 patch.object(m.UgnasClient, "fetch_detail", side_effect=lambda t: t), \
                 patch.object(m.requests, "post", side_effect=fake_post), \
                 patch.object(sys, "argv", argv), \
@@ -1183,6 +1185,7 @@ class ConservativeFlowTest(unittest.TestCase):
         buf = io.StringIO()
         with patch.dict(os.environ, env, clear=True), \
                 patch.object(m.UgnasClient, "fetch_rss", return_value=[t]), \
+                patch.object(m.UgnasClient, "fetch_guide", return_value=[t]), \
                 patch.object(m.UgnasClient, "fetch_detail", side_effect=lambda x: x), \
                 patch.object(m.requests, "post", return_value=self._Resp()), \
                 patch.object(sys, "argv", argv), redirect_stdout(buf):
@@ -1767,6 +1770,162 @@ class SharePostLearnTest(unittest.TestCase):
         cfg = m.Config()
         self.assertTrue(cfg.allow_learn_reply)
         self.assertEqual(cfg.max_learn, 3)
+
+
+class GuideModeTest(unittest.TestCase):
+    """论坛导读模式：不区分板块、按发布时间倒序。"""
+
+    def _cfg(self):
+        cfg = m.Config()
+        cfg.use_guide = True
+        cfg.guide_pages = 1
+        cfg.guide_limit = 20
+        return cfg
+
+    # ---- 时间解析 ----
+    def test_relative_minutes(self):
+        now = datetime(2026, 11, 17, 15, 0, 0)
+        got = m.parse_guide_time("发表于 27 分钟前", "2026-11-17", now)
+        self.assertEqual(got, datetime(2026, 11, 17, 14, 33, 0))
+
+    def test_half_hour(self):
+        now = datetime(2026, 11, 17, 15, 0, 0)
+        got = m.parse_guide_time("发表于 半小时前", "2026-11-17", now)
+        self.assertEqual(got, datetime(2026, 11, 17, 14, 30, 0))
+
+    def test_relative_hours_and_days(self):
+        now = datetime(2026, 11, 17, 15, 0, 0)
+        self.assertEqual(m.parse_guide_time("发表于 4 小时前", "2026-11-17", now),
+                         datetime(2026, 11, 17, 11, 0, 0))
+        self.assertEqual(m.parse_guide_time("发表于 3 天前", "2026-11-14", now),
+                         datetime(2026, 11, 14, 15, 0, 0))
+
+    def test_yesterday_clock(self):
+        """「昨天 23:54」要用 title 里的绝对日期 + 文本里的钟点。"""
+        got = m.parse_guide_time("发表于 昨天 23:54", "2026-11-16")
+        self.assertEqual(got, datetime(2026, 11, 16, 23, 54, 0))
+
+    def test_before_yesterday_clock(self):
+        got = m.parse_guide_time("发表于 前天 09:14", "2026-11-15")
+        self.assertEqual(got, datetime(2026, 11, 15, 9, 14, 0))
+
+    def test_nbsp_is_normalized(self):
+        """导读页的时间里有不换行空格 \\xa0，必须能识别。"""
+        now = datetime(2026, 11, 17, 15, 0, 0)
+        got = m.parse_guide_time("发表于 28\xa0分钟前", "2026-11-17", now)
+        self.assertEqual(got, datetime(2026, 11, 17, 14, 32, 0))
+
+    def test_date_only_fallback(self):
+        got = m.parse_guide_time("发表于 2026-11-16", "2026-11-16")
+        self.assertEqual(got, datetime(2026, 11, 16, 0, 0, 0))
+
+    def test_unparseable_returns_none(self):
+        self.assertIsNone(m.parse_guide_time("", ""))
+        self.assertIsNone(m.parse_guide_time("发表于 未知", ""))
+
+    # ---- 抓取 ----
+    def test_fetch_guide_parses_items(self):
+        html = """
+        <div class="tl"><ul id="threadlisttableid">
+          <li class="kmlist common">
+            <a class="kmtit" href="forum.php?mod=viewthread&amp;tid=7351&amp;extra=">
+              <span class="kmico kmicotxt">求回帖</span>
+              <span class="km_subject">建议媒体库列表增加用户隔离功能</span>
+            </a>
+            <div class="kmfoot">
+              <span class="kmpl">1</span>
+              <a href="home.php?mod=space&amp;uid=3425">Vy5zgk</a>
+              <span class="kmtime">发表于 <span title="2026-11-17">27 分钟前</span></span>
+              <a class="kmbg kmico_bk" href="forum.php?mod=forumdisplay&amp;fid=10">功能讨论</a>
+            </div>
+          </li>
+          <li class="kmlist common">
+            <a class="kmtit" href="forum.php?mod=viewthread&amp;tid=7350&amp;extra=">
+              <span class="km_subject">笔记多端同步</span>
+            </a>
+            <div class="kmfoot">
+              <a href="home.php?mod=space&amp;uid=212">xAG8sU</a>
+              <span class="kmtime">发表于 <span title="2026-11-17">半小时前</span></span>
+              <a class="kmbg kmico_bk" href="forum.php?mod=forumdisplay&amp;fid=16">需求广场</a>
+            </div>
+          </li>
+        </ul></div>
+        """
+        cfg = self._cfg()
+        client = m.UgnasClient.__new__(m.UgnasClient)
+        client.cfg = cfg
+        client.request_delay = 0
+        soup = m.BeautifulSoup(html, "html.parser")
+        client._soup = lambda url: soup
+        client._raw = lambda url: None
+
+        got = client.fetch_guide()
+        self.assertEqual(len(got), 2)
+        by_tid = {t.tid: t for t in got}
+        t1 = by_tid["7351"]
+        self.assertEqual(t1.title, "建议媒体库列表增加用户隔离功能")
+        self.assertEqual(t1.forum, "功能讨论")
+        self.assertEqual(t1.fid, 10)
+        self.assertEqual(t1.author, "Vy5zgk")
+        self.assertIsNotNone(t1.published)
+        self.assertEqual(t1.url, m.THREAD_URL.format(tid="7351"))
+        # 不在 DEFAULT_FORUMS 里的板块也要能解析出来
+        t2 = by_tid["7350"]
+        self.assertEqual(t2.forum, "需求广场")
+        self.assertEqual(t2.fid, 16)
+
+    def test_fetch_guide_skips_duplicates(self):
+        item = """
+        <li class="kmlist common">
+          <a class="kmtit" href="forum.php?mod=viewthread&amp;tid=7351&amp;extra=">
+            <span class="km_subject">重复帖</span>
+          </a>
+        </li>
+        """
+        html = f'<div class="tl"><ul id="threadlisttableid">{item}{item}</ul></div>'
+        cfg = self._cfg()
+        client = m.UgnasClient.__new__(m.UgnasClient)
+        client.cfg = cfg
+        client.request_delay = 0
+        soup = m.BeautifulSoup(html, "html.parser")
+        client._soup = lambda url: soup
+        client._raw = lambda url: None
+        got = client.fetch_guide()
+        self.assertEqual(len(got), 1)
+
+    # ---- 配置 ----
+    def test_guide_is_default_source(self):
+        cfg = m.Config()
+        self.assertTrue(cfg.use_guide)
+        self.assertEqual(cfg.guide_limit, 20)
+        self.assertEqual(cfg.guide_pages, 1)
+
+    def test_forum_mode_still_available(self):
+        """UGREEN_USE_GUIDE=0 时仍然走原来的板块 RSS。"""
+        args = m.build_parser().parse_args([])
+        with patch.dict(os.environ, {}, clear=True):
+            cfg = m.Config.from_env(args)
+        self.assertTrue(cfg.use_guide)
+
+        args2 = m.build_parser().parse_args(["--forums"])
+        with patch.dict(os.environ, {}, clear=True):
+            cfg2 = m.Config.from_env(args2)
+        self.assertFalse(cfg2.use_guide)
+
+    def test_use_guide_env_switch(self):
+        args = m.build_parser().parse_args([])
+        with patch.dict(os.environ, {"UGREEN_USE_GUIDE": "0"}, clear=True):
+            cfg = m.Config.from_env(args)
+        self.assertFalse(cfg.use_guide)
+
+    def test_guide_limits_from_env(self):
+        args = m.build_parser().parse_args([])
+        with patch.dict(os.environ,
+                        {"UGREEN_GUIDE_PAGES": "3", "UGREEN_GUIDE_LIMIT": "40"},
+                        clear=True):
+            cfg = m.Config.from_env(args)
+        self.assertEqual(cfg.guide_pages, 3)
+        self.assertEqual(cfg.guide_limit, 40)
 
 
 if __name__ == "__main__":

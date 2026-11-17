@@ -4,7 +4,8 @@
 
 相对于原 ugreen_auto_reply 的修复要点：
   1. 不再用 a[href*="thread-"] 抓帖子（它只会命中页脚的 29/30/104 三个制度帖）。
-     改为按板块 RSS 抓取，列表页仅作兜底且限定在 #threadlisttableid 容器内。
+     默认抓论坛导读（forum.php?mod=guide&view=newthread，不区分板块、按发布时间倒序），
+     也可退回按板块 RSS 抓取；列表页仅作兜底且限定在 #threadlisttableid 容器内。
   2. 不再随机灌固定语料，改由 OpenAI 兼容的大模型读标题 + 正文后生成/决定是否回复。
   3. 不再以 HTTP 200 判定成功，改为解析 Discuz 响应里的成功/失败标记。
   4. 修复企业微信推送：正确区分 sendNotify / QYWX_KEY / QYWX_AM 三种渠道。
@@ -90,6 +91,10 @@ BASE_URL = "https://club.ugnas.com/"
 RSS_URL = BASE_URL + "forum.php?mod=rss&fid={fid}&auth=0"
 FORUM_URL = BASE_URL + "forum.php?mod=forumdisplay&fid={fid}"
 THREAD_URL = BASE_URL + "forum.php?mod=viewthread&tid={tid}"
+# 论坛导读：不区分板块，按发布时间倒序（view=newthread 即「最新发表」）
+GUIDE_URL = BASE_URL + "forum.php?mod=guide&view=newthread&page={page}"
+# 导读页每页 50 条
+GUIDE_PAGE_SIZE = 50
 
 # 已实测（2026-11）：fid 与板块名一一对应，RSS 均可用
 DEFAULT_FORUMS: dict[int, str] = {
@@ -504,6 +509,60 @@ def tid_from_url(url: str) -> str:
     return m.group(1) if m else ""
 
 
+def parse_guide_time(text: str, abs_date: str = "",
+                     now: Optional[datetime] = None) -> Optional[datetime]:
+    """解析论坛导读页的时间。
+
+    导读页的时间有两种呈现：
+      1. `<span title="2026-11-17">27 分钟前</span>` —— title 给绝对日期，
+         文本给相对时间（N 分钟前 / 半小时前 / N 小时前 / N 天前）；
+      2. `<span title="2026-11-16">昨天 23:54</span>` —— title 给绝对日期，
+         文本给「昨天/前天 HH:MM」这种钟点。
+
+    两种都要能解析；title 优先，因为它绝对可靠。
+    """
+    text = (text or "").replace("\xa0", " ").strip()
+    now = now or datetime.now()
+    # 去掉「发表于」前缀
+    text = re.sub(r"^发表于\s*", "", text)
+
+    base: Optional[datetime] = None
+    if abs_date:
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                base = datetime.strptime(abs_date.strip(), fmt)
+                break
+            except ValueError:
+                continue
+
+    # 1) 相对时间：N 分钟前 / 半小时前 / N 小时前 / N 天前
+    m = re.search(r"(\d+)\s*分钟前", text)
+    if m:
+        return now - timedelta(minutes=int(m.group(1)))
+    if "半小时前" in text:
+        return now - timedelta(minutes=30)
+    m = re.search(r"(\d+)\s*小时前", text)
+    if m:
+        return now - timedelta(hours=int(m.group(1)))
+    m = re.search(r"(\d+)\s*天前", text)
+    if m:
+        return now - timedelta(days=int(m.group(1)))
+    if "刚才" in text or "片刻前" in text:
+        return now
+
+    # 2) 钟点：昨天 23:54 / 前天 09:14 / 12-16 23:54
+    m = re.search(r"(\d{1,2}):(\d{2})", text)
+    if m and base is not None:
+        hh, mm = int(m.group(1)), int(m.group(2))
+        if 0 <= hh <= 23 and 0 <= mm <= 59:
+            return base.replace(hour=hh, minute=mm, second=0)
+
+    # 3) 只有绝对日期：当作当天 00:00
+    if base is not None:
+        return base.replace(hour=0, minute=0, second=0)
+    return None
+
+
 def truncate_bytes(s: str, limit: int) -> str:
     b = s.encode("utf-8")
     if len(b) <= limit:
@@ -840,6 +899,10 @@ def select_per_forum_latest(threads: list[Thread], limit: int,
 class Config:
     cookie: str = ""
     fids: list[int] = field(default_factory=lambda: list(DEFAULT_FORUMS))
+    # 帖子来源：guide = 论坛导读（不区分板块，按发布时间倒序）；forums = 按 fids 走各板块 RSS
+    use_guide: bool = True
+    guide_pages: int = 1
+    guide_limit: int = 20
     hours: float = 24.0
     max_detail: int = 30
     max_replies: int = 5
@@ -970,6 +1033,10 @@ class Config:
         cfg = cls()
         cfg.cookie = env_str("UGREEN_COOKIE") or env_str("UGNAS_COOKIE")
         cfg.fids = env_fids()
+        # 帖子来源：默认走论坛导读（不区分板块），UGREEN_USE_GUIDE=0 改回按板块 RSS
+        cfg.use_guide = env_bool("UGREEN_USE_GUIDE", True)
+        cfg.guide_pages = max(1, env_int("UGREEN_GUIDE_PAGES", 1))
+        cfg.guide_limit = max(1, env_int("UGREEN_GUIDE_LIMIT", 20))
         cfg.hours = env_float("UGREEN_HOURS", 24.0)
         cfg.max_detail = max(1, env_int("UGREEN_MAX_DETAIL", 30))
         cfg.max_replies = max(1, env_int("UGREEN_MAX_REPLIES", 5))
@@ -1122,6 +1189,12 @@ class Config:
         # 命令行优先
         if args.fids:
             cfg.fids = [int(x) for x in re.split(r"[,，\s]+", args.fids) if x.isdigit()]
+        if args.use_guide is not None:
+            cfg.use_guide = args.use_guide
+        if args.guide_pages is not None:
+            cfg.guide_pages = max(1, args.guide_pages)
+        if args.guide_limit is not None:
+            cfg.guide_limit = max(1, args.guide_limit)
         if args.hours is not None:
             cfg.hours = args.hours
         if args.limit is not None:
@@ -1494,6 +1567,88 @@ class UgnasClient:
     def check_login(self) -> bool:
         soup = self._soup(BASE_URL)
         return bool(soup and self.is_logged_in(soup))
+
+    def fetch_guide(self) -> list[Thread]:
+        """抓论坛导读：不区分板块，按发布时间倒序。
+
+        导读页（forum.php?mod=guide&view=newthread）每页 50 条，
+        条目结构是 `#threadlisttableid li.kmlist`：
+          a.kmtit[href*=tid]     → tid
+          span.km_subject        → 标题
+          .kmfoot a[mod=space]   → 作者
+          .kmtime                → 时间（相对文本 + title 里的绝对日期）
+          a.kmbg[href*=fid=]     → 板块名 + fid
+
+        导读页没有正文摘要，正文靠后续抓详情页补上。
+        """
+        threads: dict[str, Thread] = {}
+        now = datetime.now()
+        for page in range(1, max(1, self.cfg.guide_pages) + 1):
+            soup = self._soup(GUIDE_URL.format(page=page))
+            if soup is None:
+                break
+            ul = soup.select_one("#threadlisttableid")
+            if ul is None:
+                break
+            items = ul.select("li.kmlist")
+            if not items:
+                break
+            count = 0
+            for li in items:
+                a = li.select_one("a.kmtit")
+                if a is None:
+                    continue
+                tid = tid_from_url(a.get("href", ""))
+                if not tid or tid in threads:
+                    continue
+                subj = li.select_one(".km_subject")
+                title = clean_text(subj.get_text(" ", strip=True)) if subj else \
+                    clean_text(a.get_text(" ", strip=True))
+
+                # 板块：a.kmbg 的文本是板块名，href 里带 fid
+                forum, fid = "", 0
+                bg = li.select_one("a.kmbg")
+                if bg is not None:
+                    forum = clean_text(bg.get_text(" ", strip=True))
+                    mf = re.search(r"[?&]fid=(\d+)", bg.get("href", ""))
+                    if mf:
+                        fid = int(mf.group(1))
+                if not forum and fid:
+                    forum = DEFAULT_FORUMS.get(fid, str(fid))
+
+                # 作者：kmfoot 里指向个人空间的纯文字链接（排除头像 img）
+                author = ""
+                foot = li.select_one(".kmfoot")
+                if foot is not None:
+                    for x in foot.select('a[href*="mod=space"]'):
+                        if x.select("img"):
+                            continue
+                        txt = clean_text(x.get_text(" ", strip=True))
+                        if txt:
+                            author = txt
+                            break
+
+                # 时间：文本是相对值，span[title] 是绝对日期
+                published = None
+                tm = li.select_one(".kmtime")
+                if tm is not None:
+                    span = tm.select_one("span")
+                    published = parse_guide_time(
+                        tm.get_text(" ", strip=True),
+                        span.get("title", "") if span else "", now)
+
+                threads[tid] = Thread(
+                    tid=tid, title=title, forum=forum, fid=fid,
+                    author=author, url=THREAD_URL.format(tid=tid),
+                    published=published,
+                )
+                count += 1
+            log(f"  导读 第 {page} 页 {count} 篇"
+                f"（累计 {len(threads)} 篇 / 每页 {GUIDE_PAGE_SIZE} 条）")
+            if count < GUIDE_PAGE_SIZE:
+                break   # 已经到最后一页
+            time.sleep(self.cfg.request_delay)
+        return list(threads.values())
 
     def fetch_rss(self) -> list[Thread]:
         """主抓取通道：各板块 RSS 实时、pubDate 精确到秒、自带正文摘要。"""
@@ -2253,6 +2408,13 @@ def describe_ai_config(cfg: Config) -> str:
         f"media={'允许' if cfg.allow_media else '禁用'}"
         f"（白名单 {', '.join(cfg.media_codes) or '空'}）",
         "-" * 68,
+        "帖子来源",
+        f"  模式      : {'论坛导读（不区分板块，发布时间倒序）' if cfg.use_guide else '按板块 RSS'}",
+        f"  导读      : 页数 {cfg.guide_pages}（每页 {GUIDE_PAGE_SIZE} 条），"
+        f"最多取最新 {cfg.guide_limit} 篇",
+        f"  板块      : {', '.join(DEFAULT_FORUMS.get(f, str(f)) for f in cfg.fids)}"
+        f"（每板块各取最新 {cfg.per_forum_limit} 篇，仅板块模式生效）",
+        "-" * 68,
         "检索（D）",
         f"  状态      : {'开启' if cfg.search_ready else '关闭'}；"
         f"源 = {', '.join(cfg.search_providers) or '无'}",
@@ -2849,12 +3011,17 @@ def send_notification(title: str, content: str) -> None:
 def render_report(results: list[dict], cfg: Config,
                   since: datetime, now: datetime,
                   candidates: int, ai_mode: str) -> str:
+    if cfg.use_guide:
+        source_line = (f"来源：论坛导读（不区分板块，发布时间倒序，"
+                       f"取最新 ≤{cfg.guide_limit} 篇）")
+    else:
+        source_line = (f"板块：{', '.join(DEFAULT_FORUMS.get(f, str(f)) for f in cfg.fids)}"
+                       f"（每板块各取最新 {cfg.per_forum_limit} 篇）")
     L = ["=" * 68,
          "绿联 NAS 社区 · AI 自动回复",
          f"窗口：{since:%m-%d %H:%M} ~ {now:%m-%d %H:%M}   "
          f"模式：{'演练（不发帖）' if cfg.dry_run else '实发'}   AI：{ai_mode}",
-         f"板块：{', '.join(DEFAULT_FORUMS.get(f, str(f)) for f in cfg.fids)}"
-         f"（每板块各取最新 {cfg.per_forum_limit} 篇）",
+         source_line,
          f"候选 {candidates} 篇 / 处理 {len(results)} 篇 / 上限 {cfg.max_replies} 条回复"
          f" / 表情回复 {'允许' if cfg.allow_emoji_reply else '禁用'}",
          f"上下文：已有楼层 ≤{cfg.max_floors} 楼 / 检索 "
@@ -2951,6 +3118,14 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--detail-limit", type=int, default=None, help="最多抓多少篇详情")
     ap.add_argument("--no-emoji", action="store_true", help="禁用表情回复")
     ap.add_argument("--fids", default="", help="覆盖板块，如 10,9,13,14,83,12")
+    ap.add_argument("--use-guide", dest="use_guide", action="store_true",
+                    default=None, help="按论坛导读抓帖（不区分板块，发布时间倒序）")
+    ap.add_argument("--forums", dest="use_guide", action="store_false",
+                    help="改回按 UGREEN_FIDS 里的板块 RSS 抓帖")
+    ap.add_argument("--guide-pages", type=int, default=None,
+                    help="导读抓几页（每页 50 条），默认 1")
+    ap.add_argument("--guide-limit", type=int, default=None,
+                    help="导读模式下最多取最新多少篇，默认 20")
     ap.add_argument("--model", default="", help="覆盖 AI_MODEL")
     ap.add_argument("--base-url", default="", help="覆盖 AI_BASE_URL")
     ap.add_argument("--api-key", default="", help="覆盖 AI_API_KEY")
@@ -3003,8 +3178,14 @@ def main() -> int:
     replied = set((state.get("replied") or {}).keys())
     recent = list(state.get("recent_replies") or [])
 
-    log(f"模式={'演练' if cfg.dry_run else '实发'}，板块={cfg.fids}，"
-        f"每板块最新 {cfg.per_forum_limit} 篇，回复上限={cfg.max_replies}，"
+    if cfg.use_guide:
+        source_desc = (f"来源=论坛导读（不区分板块，发布时间倒序，"
+                       f"≤{cfg.guide_limit} 篇 / {cfg.guide_pages} 页）")
+    else:
+        source_desc = (f"来源=板块 RSS，板块={cfg.fids}，"
+                       f"每板块最新 {cfg.per_forum_limit} 篇")
+    log(f"模式={'演练' if cfg.dry_run else '实发'}，{source_desc}，"
+        f"回复上限={cfg.max_replies}，"
         f"表情回复={'允许' if cfg.allow_emoji_reply else '禁用'}，"
         f"AI={'已启用' if cfg.use_ai else '未启用'}")
     log(f"上下文：已有楼层={'抓取' if cfg.fetch_replies else '不抓'}"
@@ -3054,11 +3235,16 @@ def main() -> int:
     if since > now:
         since = now - timedelta(hours=cfg.hours)
 
-    log("抓取各板块 RSS ...")
-    pool = client.fetch_rss()
-    log(f"RSS 汇总 {len(pool)} 篇（去重后）")
+    if cfg.use_guide:
+        log("抓取论坛导读（不区分板块，按发布时间倒序）...")
+        pool = client.fetch_guide()
+        log(f"导读汇总 {len(pool)} 篇（去重后）")
+    else:
+        log("抓取各板块 RSS ...")
+        pool = client.fetch_rss()
+        log(f"RSS 汇总 {len(pool)} 篇（去重后）")
     if not pool:
-        log("没有抓到任何帖子（RSS 不可用或网络异常），本次结束")
+        log("没有抓到任何帖子（RSS/导读不可用或网络异常），本次结束")
         return 0
 
     # 时间窗口 + 黑名单 + 已回复去重
@@ -3072,9 +3258,17 @@ def main() -> int:
             continue
         fresh.append(t)
     log(f"窗口内候选 {len(fresh)} 篇（过滤掉旧帖 / 制度帖 / 已回复）")
-    fresh = select_per_forum_latest(fresh, cfg.per_forum_limit,
-                                    cfg.log_title_chars)
-    log(f"按板块各取最新 {cfg.per_forum_limit} 篇并交错后，共 {len(fresh)} 篇")
+    if cfg.use_guide:
+        # 导读本身已是全局时间倒序，直接取最新的 N 篇即可
+        fresh.sort(key=lambda x: x.published or datetime.min, reverse=True)
+        if fresh:
+            log(f"  最新：{clip_text(fresh[0].title, cfg.log_title_chars)}")
+        fresh = fresh[:cfg.guide_limit]
+        log(f"按导读取最新 {cfg.guide_limit} 篇，共 {len(fresh)} 篇")
+    else:
+        fresh = select_per_forum_latest(fresh, cfg.per_forum_limit,
+                                        cfg.log_title_chars)
+        log(f"按板块各取最新 {cfg.per_forum_limit} 篇并交错后，共 {len(fresh)} 篇")
 
     # 已回复过的帖子默认不再回复；这里挑出「最近回过、值得回头看看」的候选，
     # 真正要不要再回，等抓到楼层内容后再按触发条件判定。
