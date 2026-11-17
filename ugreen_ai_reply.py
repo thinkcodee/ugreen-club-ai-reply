@@ -54,9 +54,6 @@ import random
 # 作为模块被导入（如单元测试）时，缺依赖会如实抛错，不擅自安装。
 
 
-
-
-
 def _install_deps(packages: list[str]) -> bool:
     print(f"[依赖] 缺少 {', '.join(packages)}，尝试自动安装 ...", flush=True)
     try:
@@ -96,8 +93,6 @@ except ImportError:
 
 # ===== core/constants =====
 # 绿联 NAS 社区自动回复 —— 常量与提示词。
-
-
 
 
 BASE_URL = "https://club.ugnas.com/"
@@ -435,10 +430,6 @@ AI_PROVIDER_ALIASES = ("AI_PROVIDER", "LLM_PROVIDER", "UGREEN_AI_PROVIDER")
 # 绿联 NAS 社区自动回复 —— 环境变量与日志。
 
 
-
-
-
-
 def log(msg: str) -> None:
     print(f"[{datetime.now():%H:%M:%S}] {msg}", flush=True)
 
@@ -483,9 +474,6 @@ def env_fids() -> list[int]:
 # 绿联 NAS 社区自动回复 —— 文本清洗与截断。
 
 
-
-
-
 def clean_text(s: str) -> str:
     s = re.sub(r"<[^>]+>", " ", s or "")
     for a, b in (("&nbsp;", " "), ("&amp;", "&"), ("&quot;", '"'),
@@ -525,9 +513,6 @@ def split_markers(raw: str, default: tuple[str, ...]) -> tuple[str, ...]:
 
 # ===== util/timeutil =====
 # 绿联 NAS 社区自动回复 —— 时间与链接解析。
-
-
-
 
 
 def parse_rss_date(text: str) -> Optional[datetime]:
@@ -607,10 +592,6 @@ def parse_guide_time(text: str, abs_date: str = "",
 
 # ===== util/aiutil =====
 # 绿联 NAS 社区自动回复 —— AI 配置解析工具。
-
-
-
-
 
 
 def env_first(names: tuple[str, ...], default: str = "") -> tuple[str, str]:
@@ -700,10 +681,6 @@ def parse_extra_body(raw: str) -> dict:
 
 # ===== core/models =====
 # 绿联 NAS 社区自动回复 —— 数据结构与检索关键词：Thread / Reply / Evidence。
-
-
-
-
 
 
 KNOWN_SEARCH_PROVIDERS = (
@@ -888,11 +865,6 @@ class Thread:
 
 # ===== forum/classify =====
 # 绿联 NAS 社区自动回复 —— 帖子分类：分享帖 / 水贴 / 标题分词。
-
-
-
-
-
 
 
 def is_emoji_reply(s: str) -> bool:
@@ -1121,12 +1093,6 @@ def select_per_forum_latest(threads: list[Thread], limit: int,
 
 # ===== core/config =====
 # 绿联 NAS 社区自动回复 —— 配置对象 Config。
-
-
-
-
-
-
 
 
 # 配置 / 数据结构
@@ -1493,13 +1459,6 @@ class Config:
 
 # ===== forum/client =====
 # 绿联 NAS 社区自动回复 —— 论坛抓取与发帖客户端。
-
-
-
-
-
-
-
 
 
 def floor_author(div) -> str:
@@ -1871,13 +1830,6 @@ def classify_reply_response(body: str, status: int,
 
 # ===== search/providers =====
 # 绿联 NAS 社区自动回复 —— 检索层：各 provider 与 Retriever。
-
-
-
-
-
-
-
 
 
 #
@@ -2260,13 +2212,6 @@ def describe_evidence(evidences: list[Evidence]) -> str:
 # 绿联 NAS 社区自动回复 —— 回复质检：去重、套话、事实性红线。
 
 
-
-
-
-
-
-
-
 def local_fallback_reply(t: Thread) -> tuple[bool, str, str]:
     """无 AI Key 时的保守兜底，返回 (是否回复, 内容, 形态)。
 
@@ -2405,17 +2350,6 @@ def validate_claim(reply: str, d: dict, t: Thread,
 
 # ===== ai/client =====
 # 绿联 NAS 社区自动回复 —— AI 介入：构造请求、解析响应、生成回复。
-
-
-
-
-
-
-
-
-
-
-
 
 
 def ai_payload(threads: list[Thread],
@@ -2898,12 +2832,6 @@ def parse_ai_response(text: str, valid_tids: set[str]) -> dict[str, dict]:
 # 绿联 NAS 社区自动回复 —— 重访：已回复帖的二次触达。
 
 
-
-
-
-
-
-
 def pick_revisit_candidates(state: dict, cfg: Config,
                             now: datetime) -> list[Thread]:
     """从状态文件里挑出「最近回复过、值得回头看看」的帖子。
@@ -2964,12 +2892,6 @@ def detect_revisit_trigger(t: Thread, cfg: Config) -> str:
 
 # ===== forum/state =====
 # 绿联 NAS 社区自动回复 —— 状态持久化与每日配额。
-
-
-
-
-
-
 
 
 def is_blocked(t: Thread, cfg: Config, replied: set[str]) -> str:
@@ -3047,10 +2969,6 @@ def save_state(cfg: Config, state: dict, now: datetime,
 
 # ===== runtime/notify =====
 # 绿联 NAS 社区自动回复 —— 推送渠道：sendNotify / 群机器人 / 应用消息。
-
-
-
-
 
 
 def notify_via_sendnotify(title: str, content: str) -> bool:
@@ -3145,13 +3063,6 @@ def send_notification(title: str, content: str) -> None:
 
 # ===== runtime/report =====
 # 绿联 NAS 社区自动回复 —— 运行报告渲染。
-
-
-
-
-
-
-
 
 
 def render_report(results: list[dict], cfg: Config,
@@ -3258,22 +3169,6 @@ def render_notify(results: list[dict], cfg: Config) -> str:
 
 # ===== runtime/cli =====
 # 绿联 NAS 社区自动回复 —— 命令行入口与主流程。
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def build_parser() -> argparse.ArgumentParser:

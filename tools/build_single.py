@@ -72,6 +72,31 @@ HEADER = '''#!/usr/bin/env python3
 '''
 
 
+def collapse_blank_lines(lines: list[str], max_blank: int = 2) -> list[str]:
+    """把连续空行压到最多 max_blank 行。
+
+    拼进单文件后，模块头部原本的 import 区（连同它周围的空行）会被整体
+    搬走，源码里"docstring → import → 代码"的排版就断了，会留下好几行
+    空白。这里统一收敛：顶层定义之间保留 2 个空行（PEP 8），其余不留。
+    """
+    out: list[str] = []
+    blanks = 0
+    for ln in lines:
+        if ln.strip() == "":
+            blanks += 1
+            if blanks > max_blank:
+                continue
+        else:
+            blanks = 0
+        out.append(ln)
+    # 去掉首尾多余空行
+    while out and out[0].strip() == "":
+        out.pop(0)
+    while out and out[-1].strip() == "":
+        out.pop()
+    return out
+
+
 def strip_module(path: Path) -> tuple[list[str], list[str]]:
     """返回 (顶层 import 语句, 其余代码)。
 
@@ -109,13 +134,25 @@ def strip_module(path: Path) -> tuple[list[str], list[str]]:
             skip_lines.update(range(node.lineno, node.end_lineno + 1))
             continue
 
+    # 被跳过的块（docstring / import）上方的连续空行也要一并丢弃，
+    # 否则 import 之间的空行会残留在单文件里，堆成大片空白。
+    for ln in sorted(skip_lines):
+        j = ln - 1
+        while j >= 1 and j not in skip_lines and lines[j - 1].strip() == "":
+            skip_lines.add(j)
+            j -= 1
+
     for i, ln in enumerate(lines, 1):
         if i in skip_lines:
             continue
         body_lines.append(ln)
 
+    body_lines = collapse_blank_lines(body_lines)
+
     if docstring:
-        body_lines = [f"# {d}" for d in docstring.splitlines()] + [""] + body_lines
+        # 模块说明与代码之间留 2 个空行（PEP 8 顶层定义间距）
+        head = [f"# {d}" for d in docstring.splitlines()]
+        body_lines = head + ["", ""] + body_lines
 
     return imports, body_lines
 
