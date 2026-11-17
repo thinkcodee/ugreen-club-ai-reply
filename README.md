@@ -1,6 +1,8 @@
 # ugreen-ai-reply
 
-绿联 NAS 社区自动回复脚本的重写版：**每个板块各取最新的几篇**，读标题和正文，交给大模型挑选出真正值得回的内容，再以真实用户的口吻回复；没有可补充的技术点时，也允许只回一个表情。适用于青龙面板定时任务，也可本地直接跑。
+绿联 NAS 社区自动回复脚本的重写版：**每个板块各取最新的几篇**，把首楼正文、**已有楼层回复**和**检索到的绿联官方知识库资料**一起交给大模型，先判断值不值得回、有没有可靠依据，再以真实用户的口吻回复；没有可补充的技术点时，也允许只回一个表情。适用于青龙面板定时任务，也可本地直接跑。
+
+v1.1.0 起增加三层保障：**A** 读已有楼层（避免重复回答、跳过已解决帖）、**B** 保守模式（无证据不得下确定性结论或报版本号）、**D** 可插拔检索（默认查 [绿联官方知识库](https://support.ugnas.com/knowledgecenter/)，可叠加本地知识库 / Tavily / Bing / SearXNG / 站内搜索）。
 
 原始仓库：[silence9527/ugreen_auto_reply](https://github.com/silence9527/ugreen_auto_reply)
 
@@ -28,7 +30,12 @@
 | 回复地址 | 手工拼 `mod=post&action=reply` URL，缺 fid/extra | 直接取详情页 `form#fastpostform` 的 action；formhash 取 `input[name=formhash]` |
 | 企业微信推送 | 把 `QYWX_AM`（corpid 四段）当成 PushPlus 的 token 拼进 `qyapi.pushplus.plus`，必然失败 | 依次走青龙 `sendNotify` → `QYWX_KEY` 群机器人 → `QYWX_AM` 应用消息（按青龙标准格式 `corpid,corpsecret,touser,agentid`，并兼容写反的顺序） |
 | 统计 | 关键词命中后风格变量被永久改成"技术型"，汇总失真 | 按帖逐条记录 AI 判断 / 质检 / 发送结果 |
-| 耗时 | 20 条 × 30~600 秒，最长 3 小时以上 | 默认最多 5 条，间隔 60~180 秒，详情抓取上限 20 篇 |
+| 耗时 | 20 条 × 30~600 秒，最长 3 小时以上 | 默认最多 5 条，间隔 60~180 秒，详情抓取上限 30 篇 |
+| 上下文 | 只看标题，看不到别人已回复什么 | 抓前 8 条已有楼层（作者 / 楼层 / 时间 / 正文）；楼主已表示解决则直接跳过 |
+| 重复回复 | 无去重，同一帖可能反复回 | 状态文件记录已回复 tid，**默认永不再回**；只有被人点名或出现更优解法才重访，且新回复与上次雷同会被拦下 |
+| 事实可靠性 | 固定语料，完全不查证 | 默认检索绿联官方知识库，并把检索片段作为 `evidence` 注入提示词；无证据时禁止下确定性结论、禁止报具体版本号，本地质检会硬拦；知识库不够时自动用已配的联网源（Tavily / 百度 / Bing / SearXNG）补查 |
+| 内容安全 | 无 | 辱骂、人身攻击、色情赌博、政治敏感等话题由本地正则硬闸拦截，发不出去；图文只能走白名单代码，模型无法塞任意图片链接 |
+| 水贴 | 只能发固定长句 | 单独的水贴形态（2~20 字 / 表情包），每次运行限量，不会当成技术咨询 |
 
 ---
 
@@ -50,6 +57,10 @@ python ugreen_ai_reply.py --hours 24
 # 先看生效配置（Key 脱敏），再单独测一次模型连通性
 python ugreen_ai_reply.py --show-config
 python ugreen_ai_reply.py --test-ai
+
+# 只测知识库检索：不访问社区、不调模型、不发帖，直接打印证据
+python ugreen_ai_reply.py --test-search "硬盘休眠"
+python ugreen_ai_reply.py --test-search "Docker 端口映射"
 
 # 只看某几个板块，每个板块取最新 2 篇，最多拟回复 3 条
 python ugreen_ai_reply.py --fids 14,10 --hours 48 --per-forum 2 --limit 3
@@ -197,6 +208,81 @@ python ugreen_ai_reply.py --show-config
 python ugreen_ai_reply.py --test-ai
 ```
 
+### 上下文与事实约束（A / B）
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `UGREEN_FETCH_REPLIES` | `1` | 抓取详情页里已有的楼层回复；`0` 或 `--no-replies` 关闭 |
+| `UGREEN_MAX_FLOORS` | `8` | 每篇最多取几楼（不含首楼） |
+| `UGREEN_FLOOR_CHARS` | `300` | 每条楼层正文截断字数；全部楼层合计上限 1200 字 |
+| `UGREEN_SKIP_SOLVED` | `1` | 楼主在楼里说「已解决 / 搞定了」时直接跳过该帖 |
+| `UGREEN_CONSERVATIVE` | `1` | **保守模式**：本地硬闸拦截无证据的确定性结论、具体版本号 / 固件号 / 参数、伪造的证据编号；`0` 或 `--no-conservative` 关闭（不建议） |
+| `UGREEN_REQUIRE_EVIDENCE` | `1` | 模型想下结论（`answer_mode=direct`）时必须引用至少一条真实存在的证据编号 |
+
+### 回复策略：重访 / 水帖 / 图文
+
+对应「回复过的帖子尽量别再回」「水贴可以简单回」「可以适当图文」这三条。
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `UGREEN_RECHECK_REPLIED` | `1` | 是否允许回头看已回复过的帖子；`0` 则永久不再回 |
+| `UGREEN_RECHECK_LIMIT` | `3` | 每次运行最多回头看几篇 |
+| `UGREEN_REVISIT_HOURS` | `168` | 只回溯最近多少小时（默认 7 天）内回复过的帖子 |
+| `UGREEN_MY_USERNAME` | 空 | 你的社区用户名。别人 @ 你或提到你时会触发重访；留空则只靠「更优解」触发 |
+| `UGREEN_ALLOW_CASUAL_REPLY` | `1` | 水贴（签到 / 闲聊 / 打卡）允许用一句简短回应或表情包 |
+| `UGREEN_MAX_CASUAL` | `1` | 每次运行最多几条水帖回复，防止刷屏 |
+| `UGREEN_ALLOW_MEDIA` | `1` | 是否允许附带论坛表情 / 图片代码 |
+| `UGREEN_MEDIA_CODES` | `[赞],[图片],[示意图],[加油],[鼓掌],[哈哈],[谢谢],[握手]` | **白名单**：模型只能填这里面的代码，其它一律丢弃，绝不允许自由塞图片链接 |
+
+**重访的判定逻辑**：已回复过的帖子默认不再回复。只有命中下面任一触发条件才会重新进入模型判断，并且新回复若与上次内容高度相似会被本地硬闸拦掉：
+
+1. 有人点名你 —— 楼层里出现 `@你的用户名` 或你的用户名（需配置 `UGREEN_MY_USERNAME`）；
+2. 出现了更优解法 —— 新楼层里出现「其实可以 / 更好的办法 / 亲测可用 / 根本原因是 / 官方给出了」这类措辞。
+
+重访只回溯 `UGREEN_REVISIT_HOURS` 窗口内、且上次回复在最近 `UGREEN_RECHECK_LIMIT` 篇内的帖子，避免每次都翻很长的历史。
+
+### 检索（D）
+
+默认 **`UGREEN_SEARCH_PROVIDERS=ugnas-kb,tavily,baidu`**：绿联官方知识库零配置可用，另外两个联网源**没配 Key 时直接返回空、不会发出任何请求**；知识库查到足够证据就不联网，证据不足（少于 `UGREEN_WEB_FALLBACK_THRESHOLD` 条）才自动联网补查。可用源：`ugnas-kb`、`local`、`site`、`tavily`、`bing`、`baidu`、`searxng`、`custom`，逗号分隔；填 `none` 或设 `UGREEN_SEARCH=0` / `--no-search` 关闭。
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `UGREEN_SEARCH` | `1` | 总开关 |
+| `UGREEN_SEARCH_PROVIDERS` | `ugnas-kb,tavily,baidu` | 检索源与顺序；命令行 `--search-providers` 可覆盖 |
+| `UGREEN_SEARCH_MAX_QUERIES` | `8` | 每次运行最多给几篇帖子做检索（按候选顺序，超出的不查） |
+| `UGREEN_SEARCH_MAX_EVIDENCE` | `4` | 每篇最多保留几条证据 |
+| `UGREEN_SEARCH_SNIPPET_CHARS` | `400` | 单条证据片段字数 |
+| `UGREEN_SEARCH_TOTAL_CHARS` | `1800` | 每篇证据总字数预算，控制 prompt 体积与成本 |
+| `UGREEN_SEARCH_MIN_RELEVANCE` | `0.12` | 只丢明显跑题的证据；其余带 `relevance` 分数交给模型判断 |
+| `UGREEN_SEARCH_LANGUAGE` | `zh-CN` | 知识库语言，可选 `zh-TW` / `en-US` / `de-DE` / `ja-JP` 等 |
+| `UGREEN_SEARCH_DELAY` | `0.8` | 检索请求间隔（秒） |
+| `UGREEN_SEARCH_TIMEOUT` | `20` | 检索请求超时（秒） |
+| `UGREEN_KB_DETAIL` | `1` | 对排在前面的文章再取一次完整正文（比搜索摘要更实） |
+| `UGREEN_KB_DETAIL_LIMIT` | `1` | 每次检索取几篇全文 |
+| `UGREEN_WEB_FALLBACK_THRESHOLD` | `1` | 一手资料少于几条时触发联网补查 |
+| `UGREEN_LOCAL_KB_DIR` | `./knowledge` | 本地知识库目录，放 `.md` / `.txt`，按 Markdown 标题分块做词频检索 |
+| `TAVILY_API_KEY` | 空 | 启用 Tavily 联网检索 |
+| `BING_SEARCH_KEY` / `BING_API_KEY` | 空 | 启用 Bing Web Search v7 |
+| `BAIDU_SEARCH_KEY` | 空 | 启用百度检索（也可用 `QIANFAN_API_KEY` / `APPBUILDER_TOKEN` / `BAIDU_API_KEY`） |
+| `SEARXNG_URL` | 空 | 自建 SearXNG 地址，如 `http://127.0.0.1:8080` |
+| `UGREEN_SEARCH_CUSTOM_URL` | 空 | 自定义 GET 端点，URL 里可放 `{query}`，否则追加 `?q=` |
+| `UGREEN_SEARCH_RESULTS_PATH` | `results` | 自定义端点里结果数组的点分路径，如 `data.items` |
+| `UGREEN_SEARCH_TITLE_FIELD` / `_SNIPPET_FIELD` / `_URL_FIELD` | `title` / `content` / `url` | 结果条目字段名 |
+| `UGREEN_SEARCH_CUSTOM_HEADERS` | 空 | JSON 对象或 `K: V; K2: V2` |
+
+**百度检索**默认走千帆 AI 搜索端点 `https://qianfan.baidubce.com/v2/ai_search/web_search`，返回结构留空时自动探测 `references` / `results` / `data` 等常见路径；端点、鉴权头、结果路径都可改：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `BAIDU_SEARCH_URL` | 千帆 `.../v2/ai_search/web_search` | 检索端点 |
+| `BAIDU_SEARCH_ENGINE` | `baidu_search` | 搜索引擎标识 |
+| `BAIDU_SEARCH_TOP_K` | `5` | 每次取几条结果 |
+| `BAIDU_SEARCH_RESULTS_PATH` | 空 | 结果数组的点分路径，如 `data.references`；留空自动探测 |
+| `BAIDU_AUTH_HEADER` / `BAIDU_AUTH_SCHEME` | `Authorization` / `Bearer` | 鉴权头与前缀，scheme 留空则直接放 Key |
+| `BAIDU_SEARCH_HEADERS` | 空 | 额外请求头，JSON 对象或 `K: V` |
+
+关于 `site`（Discuz 站内搜索）：实测**游客态会被论坛拒绝**（返回「提示信息」页），只有配置了有效 `UGREEN_COOKIE` 时才可能拿到结果；失败会自动降级为空，不影响其它源。
+
 ### 通知
 
 | 变量 | 格式 |
@@ -214,11 +300,23 @@ python ugreen_ai_reply.py --test-ai
    ├─ 每个板块各取最新 N 篇，按板块轮转交错（默认 6 × 4 = 24 篇）
    │
    ├─ 详情页：首楼正文、标题、formhash、form#fastpostform 的 action
+   │   └─ [A] 已有楼层（作者/楼层/时间/正文）；楼主已说「已解决」→ 跳过
    │
-   ├─ AI 批量挑选有意义的帖子：should_reply / kind / reply / reason
+   ├─ [重访] 已回复过的帖子默认不再回；只回溯最近若干小时内回过的，
+   │         抓到楼层后判断「有人点名我」或「出现更优解法」才重新送进模型
    │
-   ├─ 质检：文字回复 8~200 字；表情回复 ≤20 字且必须含表情；
-   │        两者都拦套话、外链联系方式、AI 自述、连续重复
+   ├─ [D] 提取关键词 → 检索证据（默认绿联官方知识库，不够再联网补查）
+   │   └─ 去重 / 相关性粗筛 / 字数预算裁剪 → 注入每篇的 evidence
+   │
+   ├─ 模型：标题 + 首楼 + 已有楼层 + evidence → should_reply / kind /
+   │        answer_mode / confidence / evidence_used / format / media / reply
+   │
+   ├─ 内容质检：文字 8~200 字；表情 ≤20 字且含表情；水帖 2~20 字；
+   │           全部拦套话、外链联系方式、AI 自述、辱骂、不当内容、连续重复
+   │
+   ├─ [B] 事实质检：无证据却报版本号 / 下确定性结论 → 拦截；
+   │               声称有依据却没引用真实证据编号 → 拦截；
+   │               重访帖的新回复与上次几乎一样 → 拦截
    │
    └─ 发帖（或演练）──> 解析响应体判定成败 ──> 成功才写入状态 ──> 汇总 + 推送
 ```
@@ -259,18 +357,61 @@ python ugreen_ai_reply.py --test-ai
 ```json
 {"results":[
   {"tid":"7342","should_reply":true,"kind":"text",
-   "reply":"Vivo 的这个桌面快捷方式是系统权限控制的，可以先在设置里把「创建桌面快捷方式」权限打开…",
-   "reason":"具体机型的具体问题"},
+   "answer_mode":"probe","confidence":"low","evidence_used":[],
+   "reply":"Vivo 的桌面快捷方式是系统权限控制的，可以先确认一下有没有给「创建桌面快捷方式」权限，这个我不太确定。",
+   "reason":"具体机型，但缺环境信息"},
+  {"tid":"7332","should_reply":true,"kind":"text",
+   "answer_mode":"direct","confidence":"high","evidence_used":["kb:876"],
+   "reply":"官方文档里提到硬盘休眠要求一段时间没有读写任务，可以先看看是不是 Docker 虚拟机或下载任务在后台跑。",
+   "reason":"官方知识库有直接依据"},
   {"tid":"7323","should_reply":true,"kind":"emoji",
+   "answer_mode":"emoji","confidence":"low","evidence_used":[],
    "reply":"👍","reason":"教程很完整，无可补充"},
+  {"tid":"7311","should_reply":true,"kind":"casual",
+   "answer_mode":"casual","confidence":"low","evidence_used":[],
+   "media":"[赞]","reply":"这个我也有同感",
+   "reason":"水帖，简单回应"},
   {"tid":"7339","should_reply":false,"kind":"text","reply":"",
    "reason":"纯反馈无信息量"}
 ]}
 ```
 
-系统提示词明确要求：文字回复必须紧扣帖子的具体内容、不编造功能与版本、不假装官方、不留外链联系方式、30~120 字、不写"感谢分享/支持楼主"这类套话；信息不足时只追问一个关键信息。不值得回的帖子直接 `should_reply=false`。
+系统提示词明确要求：文字回复必须紧扣帖子的具体内容、不编造功能与版本、不假装官方、不留外链联系方式、30~160 字、不写"感谢分享/支持楼主"这类套话；信息不足时只追问一个关键信息。不值得回的帖子直接 `should_reply=false`。
+
+`answer_mode` 只有 `direct`（给结论）、`probe`（追问 / 排查方向）、`emoji`、`casual` 四种；**只有 `confidence=high` 且 `evidence_used` 非空才允许 `direct`**，模型自己标错也会被本地纠正或拦下。
 
 `kind="emoji"` 用于"帖子写得很完整、没有可补充的技术点，但确实值得鼓励"的情况，允许纯表情（`👍`）、论坛表情码（`[赞]`）或"表情 + 6 字以内短语"（"这个思路很巧 👏"）。质检会放宽长度，但**仍然拦截**灌水套话、外链、联系方式、AI 自述，以及连续三次刷同一个表情。不想用表情时设 `UGREEN_ALLOW_EMOJI_REPLY=0`。
+
+`kind="casual"` 用于**水贴**（签到、闲聊、打卡）：2~20 字的轻松回应或表情包，不带任何技术结论。技术提问一律不许用 casual。每次运行最多 `UGREEN_MAX_CASUAL` 条（默认 1），防止刷屏。
+
+`format="steps"` 时模型会用 `1. … 2. … 3. …` 或换行分点写多步操作，报告里会标「分步」；单段说明用 `"plain"`。
+
+`media` 是**可选的论坛表情 / 图片代码**，且必须落在 `UGREEN_MEDIA_CODES` 白名单里（默认 `[赞] [图片] [示意图] [加油] [鼓掌] [哈哈] [谢谢] [握手]`）。白名单之外的代码会被直接丢弃，**模型无法自由塞任何图片链接**。每条回复最多带一个。
+
+### A / B / D：楼层、证据与事实约束
+
+**A · 已有楼层**：详情页里前 8 楼的作者、楼层号、精确时间和正文会一起送进 prompt。模型被要求不要复读别人已给出的正确答案；若楼主在楼里说了「已解决 / 搞定了 / 可以了」，该帖直接跳过（可用 `UGREEN_SKIP_SOLVED=0` 关闭）。实测 11 篇候选共抓到 29 条楼层。
+
+> 绿联用的是 comiis 皮肤，用户名在 `a.km_name`（`display:none`）里，而同一个 `div.authi` 下第一个 `a[href*=mod=space]` 是**没有文本的头像链接**——取错会让作者名变空，"楼主是否已解决"就永远判断不出来。脚本已按 `km_name → xw1 → mod=space` 的顺序取并跳过空文本，同时从首楼回填楼主名。
+
+**重访 · 已回复过的帖**：默认**不再回复**。只有命中触发条件才会重新送进模型：① 有人点名你（需配 `UGREEN_MY_USERNAME`）；② 新楼层出现更优解法。新回复若与上次内容相似度超过 0.85 会被本地硬闸拦掉。回溯窗口与条数由 `UGREEN_REVISIT_HOURS` / `UGREEN_RECHECK_LIMIT` 控制。
+
+**D · 检索**：默认查绿联官方知识库 `https://support.ugnas.com/knowledgecenter/` 网页端同源的公开只读接口（`api.ugnas.com/.../base/search`），返回标题、摘要、正文片段，必要时再取一次文章全文。证据带 `ref`（如 `kb:876`）、`source` 和 `relevance`。单次运行最多给 8 篇帖子检索，每篇最多 4 条、总字数 1800 字，并有请求间隔和失败降级。想离线复现或补充自有资料，把 Markdown 放进 `knowledge/` 并加 `local` 源即可；`--test-search "硬盘休眠"` 可以只跑检索看结果。
+
+知识库查到的证据少于 `UGREEN_WEB_FALLBACK_THRESHOLD` 条时，会自动调用已配置的联网源补查（默认列表 `ugnas-kb,tavily,baidu`；Tavily / 百度**没配 Key 时直接返回空、不发任何请求**）。百度默认走千帆 AI 搜索端点，端点、鉴权头、结果路径都能改。
+
+**B · 保守模式**：提示词要求模型只能把 `evidence` 里**明确写了**的事实作为结论，且必须引用对应 `ref`；没有证据时只追问一个关键信息或给不带结论的排查顺序。发出之前还有一道本地硬闸：
+
+- 没有证据却出现版本号 / 固件号 / 具体参数（如 `1.17.0.0031`）→ 拦截；
+- 没有证据却出现「肯定 / 官方已经支持 / 据官方文档 / 不支持 X」等确定性或官方口吻 → 拦截；
+- `answer_mode=direct` 或 `confidence=high` 但根本没有检索证据 → 拦截；
+- 引用了不存在的证据编号 → 拦截；
+- 表情回复里夹带技术断言 → 拦截；
+- 重访帖的新回复与上次几乎一样 → 拦截。
+
+**内容安全**：辱骂、人身攻击、歧视、嘲讽，以及色情、赌博、暴力、违法破解、政治敏感等话题，除了提示词里明令禁止外，还有一道本地正则硬闸 `ABUSIVE_RE` / `UNSAFE_TOPIC_RE` 兜底——即使模型违规输出，也**发不出去**。同时照旧拦截灌水套话、外链、联系方式与 AI 自述。
+
+**必须说清的局限**：以上约束能挡住「凭空编版本号」「发辱骂内容」这类硬伤，但**无法校验回复与证据在语义上是否一致**，也无法保证检索到的资料一定与帖子相关。官方知识库用模糊检索，可能返回沾边的文档；脚本会做字面相关性粗筛并把分数交给模型，最终判断仍依赖模型遵守提示词。它现在是「会查官方文档、且被规则约束的经验型回复」，**不是查证过的事实型回复**。建议先看几天演练输出，再决定是否开实发。
 
 ---
 
@@ -294,6 +435,21 @@ Discuz 模板不同，成功文案可能变化。设 `UGREEN_DEBUG=1` 看响应�
 **Q：表情回复被论坛拒了？**
 部分 Discuz 配置会限制过短内容，响应里出现"内容太短"时脚本会如实记为失败（这比原脚本误报成功要好）。可让模型给"表情 + 一句话"而非纯表情，或设 `UGREEN_ALLOW_EMOJI_REPLY=0` 只用文字回复。
 
+**Q：检索返回 0 条，或者回复全被"保守模式拦截"？**
+先跑 `python ugreen_ai_reply.py --test-search "关键词"` 确认知识库接口本身通不通。检索失败会自动降级为空，此时保守模式下模型只能追问或给排查方向，很多帖子会被判 `should_reply=false` —— 这是**故意的安全行为**，不是故障。若确实不需要约束，可设 `UGREEN_CONSERVATIVE=0`，但会显著提高答错风险。
+
+**Q：怎么加自己的资料？**
+在脚本目录下建 `knowledge/`，放 `.md` / `.txt`（按 `#` 标题分块），再设 `UGREEN_SEARCH_PROVIDERS=ugnas-kb,local`。也可以接 Tavily / Bing / 百度 / SearXNG / 自定义 HTTP 端点，详见第四节。
+
+**Q：我回过的帖子还会再回吗？**
+默认**不会**。已回复的 tid 记在 `ugreen_state.json` 里，之后直接过滤掉。只有两种例外会重访：① 有人 @ 你或提到你（需设 `UGREEN_MY_USERNAME=你的社区用户名`）；② 新楼层里出现明显更优的解法。日志里会打印「重访命中 tid=xxxx：xxx 点名了你」或「提到了更优解法」，报告里也会带一行 `[重访]`。完全关掉重访设 `UGREEN_RECHECK_REPLIED=0`。
+
+**Q：百度检索要怎么配？**
+在百度智能云（千帆 / AppBuilder）申请 API Key 后设 `BAIDU_SEARCH_KEY`，脚本默认打千帆的 `https://qianfan.baidubce.com/v2/ai_search/web_search`；若你的接口地址或返回结构不同，用 `BAIDU_SEARCH_URL` 和 `BAIDU_SEARCH_RESULTS_PATH` 覆盖即可。没配 Key 时该源直接返回空、不发任何请求，不影响知识库。
+
+**Q：官方知识库接口会不会被我刷爆？**
+默认每次运行最多检索 8 篇、每篇最多 2 条查询、请求间隔 0.8 秒，全部是只读 GET，且结果在同一次运行内缓存。请保持低频，不要用 `UGREEN_SEARCH_MAX_QUERIES` 做批量爬取；站点 `robots.txt` 也明确禁止爬取 `/api/` 路径下的内容。
+
 **Q：想完全禁止自动发帖，只做监控？**
 保持默认 `UGREEN_DRY_RUN=1` 即可，此时不需要 Cookie 和 API Key 也能跑通抓取与报告。
 
@@ -303,12 +459,13 @@ Discuz 模板不同，成功文案可能变化。设 `UGREEN_DEBUG=1` 看响应�
 
 绿联社区《社区公约》明确禁止"同一用户多次重复发布相同内容"和"无意义或灌水帖子和评论"，违规可删帖、警告、限制发帖权限直至封禁账号。原脚本把随机语料刷到《侵权投诉指引》上，既踩了规则，观感也很差。
 
-本工程加了黑名单、去重、内容质检和回复上限，但**自动回复本质上仍是自动化发帖**，请：
+本工程加了黑名单、去重、内容质检、事实约束和回复上限，但**自动回复本质上仍是自动化发帖**，且模型仍可能给出过时或不对的技术信息，请：
 
 - 先用演练模式看几天输出，确认回复确实有帮助再考虑开实发；
 - 保持低频（默认每天最多 5 条），不要把间隔调到 0；
 - 定期检查 `ugreen_state.json` 与社区通知；
-- 若社区不欢迎自动化回复，请立即停止使用。
+- 检索只用官方公开只读接口并保持低频，不要批量爬取；
+- 若社区不欢迎自动化回复，或发现回复有明显错误，请立即停止使用。
 
 ---
 
@@ -319,7 +476,8 @@ ugreen-ai-reply/
 ├── ugreen_ai_reply.py     # 主脚本（单文件，青龙直接 task 运行）
 ├── requirements.txt
 ├── config.example.env     # 环境变量样例
-├── tests/test_core.py     # 纯函数离线单测
+├── tests/test_core.py     # 92 项纯离线单测
+├── knowledge/             # 可选：本地知识库 .md/.txt（需加 local 检索源）
 └── README.md
 ```
 
@@ -330,3 +488,5 @@ ugreen-ai-reply/
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+两个诊断命令都不访问社区、不调模型、不发帖：`--show-config`（打印生效配置，Key 脱敏）与 `--test-search "关键词"`（打印检索证据）。

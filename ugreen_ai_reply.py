@@ -9,6 +9,12 @@
   3. 不再以 HTTP 200 判定成功，改为解析 Discuz 响应里的成功/失败标记。
   4. 修复企业微信推送：正确区分 sendNotify / QYWX_KEY / QYWX_AM 三种渠道。
   5. 状态持久化去重、黑名单、限流、dry-run 默认开启。
+  6. A：把帖子里已有的楼层回复一起喂给模型，避免重复回答 / 识别已解决帖。
+  7. B：保守模式——没有证据不得下确定性结论、不得编造版本号与参数；
+     不确定时只追问一个关键信息或给排查方向。
+  8. D：可插拔检索层，默认查询绿联官方知识库（support.ugnas.com 同源公开只读接口），
+     也可叠加本地知识库 / Tavily / Bing / SearXNG / 站内搜索 / 自定义端点，
+     把检索到的片段作为证据注入 prompt，并要求回复标注引用了哪些证据。
 
 默认只演练不发帖。确认无误后设置 UGREEN_DRY_RUN=0 才会真正回复。
 """
@@ -16,6 +22,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -31,7 +38,7 @@ from difflib import SequenceMatcher
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import quote, urljoin, urlsplit
 
 # ---------------------------------------------------------------------------
 # 依赖自检（青龙容器里一般能 pip；可用 UGREEN_AUTO_INSTALL_DEPS=0 关闭）
@@ -115,6 +122,84 @@ BAD_REPLY_RE = re.compile(
     re.I,
 )
 
+# ---- A：已有楼层 / 已解决识别 -------------------------------------------
+SOLVED_MARKERS = (
+    "已解决", "解决了", "搞定了", "已经好了", "可以了", "问题已排除",
+    "按你说的改好了", "找到原因了", "多谢，好了", "谢谢，好了", "结帖",
+)
+# 楼层正文里常见的注册提示噪声，压进 payload 前去掉
+REPLY_NOISE_RE = re.compile(
+    r"^马上注册.{0,80}?立即注册\s*[×x]?\s*"
+    r"|^您需要\s*登录\s*才可以.{0,80}?立即注册\s*[×x]?\s*",
+)
+# 所有楼层正文合计的字数预算，避免把 prompt 撑爆
+REPLY_BUDGET_CHARS = 1200
+
+# 重访已回复帖的触发条件：新增楼层里出现更优解 / 楼主或他人纠正了原答案
+BETTER_SOLUTION_MARKERS = (
+    "其实可以", "更好的办法", "更好的方法", "正确做法是",
+    "不用这么麻烦", "亲测可用", "已验证", "实测有效", "这样更简单",
+    "上面说的不对", "楼上说错了", "补充一下", "还有个办法",
+    "根本原因是", "官方给出了",
+)
+
+# ---- 安全 / 公序良俗：提示词之外的本地硬闸 -------------------------------
+ABUSIVE_RE = re.compile(
+    r"傻[逼bB叉吊]|煞笔|沙雕|废物|蠢货|白痴|智障|脑残|残废|滚蛋|去死|"
+    r"狗东西|狗腿子|贱人|婊子|妓女|操你妈|草泥马|"
+    r"fuck|shit|bitch|asshole|idiot|moron|"
+    r"约炮|裸聊|色情|黄片|赌博|博彩|私彩|代孕|"
+    r"破解版|盗版资源|破解补丁|游戏外挂|刷单返利",
+    re.I,
+)
+UNSAFE_TOPIC_RE = re.compile(
+    r"政治敏感|颠覆国家|分裂国家|恐怖袭击|制毒|制枪|买卖枪支|自残|自杀方法",
+)
+
+# 可选「图文」：只允许白名单里的论坛表情/图片代码，模型不能自由塞外链
+DEFAULT_MEDIA_CODES = ("[赞]", "[图片]", "[示意图]", "[加油]", "[鼓掌]",
+                       "[哈哈]", "[谢谢]", "[握手]")
+
+# 检索分级：一手资料优先，明显不够时才动用联网源
+KB_FIRST_PROVIDERS = frozenset({"ugnas-kb", "local", "site"})
+WEB_PROVIDERS = frozenset({"tavily", "bing", "baidu", "searxng", "custom"})
+BAIDU_RESULT_PATHS = ("references", "data.references", "result.references",
+                      "results", "data.results", "data", "search_results")
+
+# ---- B：保守模式的事实性红线 ---------------------------------------------
+# 版本号 / 固件号 / 具体参数：没有证据时出现一律拦截
+VERSION_RE = re.compile(
+    r"\b\d+\.\d+(?:\.\d+){0,3}\b|v\d+\.\d+|\bUGOS\s*Pro?\s*\d|"
+    r"固件\s*\d|版本\s*[:：]?\s*\d|\d+\s*(?:TB|GB|MB|端口|W)",
+    re.I,
+)
+# 确定性断言 / 官方口吻：没有 high 证据时不许说
+RISK_CLAIM_RE = re.compile(
+    r"肯定|一定|必然|绝对|百分百|官方(?:已经|已|明确|确认)|已经支持|"
+    r"不支持|内置了|必须从|只能(?:用|在|通过)|唯一(?:方法|原因)|"
+    r"实测|亲测|确认是|就是.*?问题|无需|不可能|不会(?:有|出现)|"
+    r"固件版本|系统版本|适用于所有|全系(?:列)?支持|据官方文档|"
+    r"根据官方(?:文档|说明)|官方文档(?:显示|说明)",
+)
+
+# ---- D：检索层 -----------------------------------------------------------
+# 绿联官方知识库（support.ugnas.com 网页端同源的公开只读接口，已实测 2026-11）
+KB_HOME_URL = "https://support.ugnas.com/knowledgecenter/"
+KB_SEARCH_URL = ("https://api.ugnas.com/api/system/knowledge_center/"
+                 "sa/base/search")
+KB_ARTICLE_URL = ("https://api.ugnas.com/api/system/knowledge_center/"
+                  "sa/base/article/info")
+KB_STRATEGY = "fog"
+KB_DEFAULT_LANGUAGE = "zh-CN"
+
+# 关键词提取用的停用词（只起降噪作用，不做分词）
+SEARCH_STOPWORDS = frozenset(
+    "的 了 是 在 和 与 有 我 你 他 这 那 个 们 吗 呢 吧 啊 怎么 如何 什么 "
+    "为什么 可以 不能 一下 一个 请教 求助 请问 大家 谢谢 感谢 分享 帖子 "
+    "问题 遇到 出现 现在 已经 还是 但是 就是 以及 关于 一些 之后 之前 "
+    "绿联 社区 论坛 大佬 小白 新手 求助帖 有没有 求 急 在线等".split()
+)
+
 # 允许的「表情回复」：Unicode emoji / Discuz 表情码 [哈哈] / 常见颜文字
 EMOJI_PATTERN = re.compile(
     r"[\U0001F300-\U0001FAFF\U0001F900-\U0001F9FF\U00002600-\U000027BF"
@@ -134,28 +219,78 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 SYSTEM_PROMPT = """你是绿联 NAS 社区的一位热心老用户，熟悉 UGOS Pro、Docker 容器、硬盘与存储、网络与远程访问、影音与备份等常见玩法。
 
-你的任务：逐篇阅读给你帖子，判断是否值得回复，并写出一条真正有帮助的回复。
+你的任务：逐篇阅读帖子，判断是否值得回复，并写出一条真正有帮助、且不会误导别人的回复。
 
-判断规则：
-- 值得回复：具体报错、具体环境、明确需求、教程里可补充或可纠正的细节、有信息量的经验讨论、确实写得好的原创教程或经验分享。
-- 不值得回复：纯签到、一句话且无信息量、广告、重复帖、官方公告/制度帖、纯灌水、你完全没有相关知识的领域。
-  → should_reply=false，reply 留空。
-- 帖子本身是「纯表情/纯打卡」内容时不回；但帖子内容有价值时，允许你用表情作为回复（见下）。
+【你会收到的字段】
+每篇帖子包含：tid、title、forum、author、published、content_preview（首楼正文前 800 字）、
+existing_replies（该帖已有的楼层回复，含楼层号/作者/正文）、likely_solved（楼主是否已在楼里表示问题解决）、
+evidence（为你检索到的资料片段，每条带 ref 编号、title、snippet、source、relevance）、keywords；
+重访帖另有 revisit / my_previous_reply / trigger_reason；media_codes 列出允许你使用的图文代码。
+注意：你看不到帖子以外的实时信息，也不会联网。唯一的外部事实来源是 evidence 里的片段。
+evidence 是关键词模糊检索得到的**候选**资料，可能包含与帖子无关的文档。用之前必须先判断
+每条证据是否与帖子主题真正相关；不相关的证据一律不得引用、也不得基于它下结论，
+此时按「evidence 为空」处理。每条 evidence 带一个 relevance（0~1）粗粒度主题相关度，
+它只是标题字面重合的近似值，**仅供参考、不能当作相关性证明**：低分大概率跑题，
+高分也可能因为共享「绿联NAS」这类通用词而虚高。最终是否相关由你根据标题和内容判断。
 
-回复有两种形态，用 kind 区分：
-- kind="text"：有实质内容的回复，30~120 字。必须紧扣该帖的具体内容（提到设备、版本、报错、环境或步骤），
-  给出可执行建议、排查顺序或经验判断。信息不足时只追问一个最关键的缺失信息，同样算有价值。
-- kind="emoji"：帖子写得很完整、没有可补充的技术点，但确实值得鼓励时，
-  可以只回一个表情，或「表情 + 不超过 6 个字的短语」，例如 "👍"、"这个思路很巧 👏"、"[赞]"。
-  此时 reply 必须含 emoji 或论坛表情码，整条不超过 20 字。不要为了凑数滥用表情。
+【事实纪律 —— 最重要】
+- evidence 为空，或证据不足以支持某个结论时，**禁止**输出确定性结论，禁止报出具体版本号、固件号、
+  参数值、端口数值、"官方已经支持/不支持 X""某某版本才有这个功能"这类断言。
+  此时只能：追问一个最关键的缺失信息，或给出不带具体结论的排查顺序（先查什么、再查什么），
+  并如实说明"这个我不太确定"。
+-   只有 evidence 中**明确写了**的事实，才能作为结论写进回复；不要外推、不要脑补，
+  不要把 "某文档提到 A" 说成 "所有机型都支持 A"。引用时说法要留有余地，例如"官方文档里提到…"。
+- confidence 只允许三档，按证据强度如实填写：
+  * "high"：evidence 里有直接、明确的依据，且你在 evidence_used 里列出对应 ref。
+  * "medium"：只有间接线索，或仅凭通用经验给排查方向。
+  * "low"：信息不足、纯鼓励、或你不确定。
+- answer_mode 只能是 "direct"（给出结论）、"probe"（追问/排查方向）、"emoji"（纯表情鼓励）。
+  **只有 confidence="high" 且 evidence_used 非空时才允许 "direct"。** 其余一律 "probe" 或 "emoji"。
+- 绝不编造产品功能、版本号、参数或官方结论；不确定就明说不确定。宁可 should_reply=false，也不要答错。
 
-通用要求：
-- 不确定就如实说明不确定，并给出查证方向；绝不编造产品功能、版本号、参数或官方结论。
-- 口语、友好，不写客套套话，不写"感谢分享""支持楼主""学习了"这类灌水句。
-- 不假装官方、不推广、不留联系方式与外链；一次只输出一条回复，不要写标题。
+【判断规则】
+- 值得回复：具体报错、具体环境、明确需求、教程里可补充的细节、有信息量的经验讨论、写得好的原创教程。
+- 不值得回复（should_reply=false，reply 留空）：广告/重复帖/官方公告制度帖；
+  likely_solved=true；existing_replies 里别人已经给出了同样且正确的答案（不要复读）；
+  帖子涉及政治敏感、色情、赌博、暴力、违法破解等话题；你完全没有相关知识的领域。
+- 【重访帖】revisit=true 表示这帖你之前回过（my_previous_reply 是你当时说的话）。
+  只有 trigger_reason 成立（有人点名你，或新增楼层出现了明显更优的解法）时才考虑回复，
+  且**绝不能重复或改写 my_previous_reply**；其余情况一律 should_reply=false。
+- 【水帖】纯签到、闲聊、打卡这类内容，允许用 kind="casual" 给一句简短友好的回应或表情包，
+  但只在气氛轻松、确实没别的可补充时才用；每次运行的额度由脚本限制，别滥用。
+- 帖子本身是纯表情/纯打卡内容时优先 casual；内容有价值时按下面的形态回。
+
+【回复形态与条理】
+- kind="text"：30~160 字，紧扣该帖的具体内容（提到设备、报错、环境或步骤）。
+  **条理清晰**：先给一句结论或判断，再给依据或步骤；涉及多步操作时用
+  `1. … 2. … 3. …` 或换行分点，并把 format 设为 "steps"；单段说明用 "plain"。
+  不要写成没有层次的一大段，也不要堆砌术语。
+  有证据时给可执行建议并说明依据；无证据时只给排查顺序或追问一个关键信息。
+- kind="emoji"：帖子写得很完整、没有可补充的技术点但值得鼓励时，只回一个表情或「表情 + 不超过 6 字短语」，
+  如 "👍"、"这个思路很巧 👏"、"[赞]"。整条不超过 20 字，此时 answer_mode="emoji"、confidence="low"、
+  evidence_used=[]。不要为了凑数滥用表情。
+- kind="casual"：水帖/闲聊的简短回应，2~20 字，可以是表情包、论坛表情码或一句轻松的话，
+  如 "👍"、"[哈哈]"、"这个我也有同感"。answer_mode="casual"、confidence="low"、evidence_used=[]。
+  仍禁止套话、广告、辱骂；**不要对技术提问使用 casual**。
+- 【图文】需要配图或表情点缀时，可在 media 字段填一个允许的论坛代码（见输入里的 media_codes）。
+  脚本只会附加白名单内的代码，其它一律忽略；不要在 reply 里写图片地址或任何链接。
+  适度使用，一条回复最多一个，不得借此刷屏。
+
+【通用要求】
+- 口语、友好，不写"感谢分享""支持楼主""学习了"这类灌水句。
+- **严禁**辱骂、人身攻击、歧视、嘲讽，以及涉及色情、赌博、暴力、违法破解或政治敏感的内容；
+  遇到这类帖子直接 should_reply=false，不要接话、不要转述。
+- 不假装官方、不推广、不留联系方式与外链；回复里不要写 ref 编号或图片链接；一次只输出一条回复，不要写标题。
+- **不得编造、歪曲、夸大或断章取义**。引用证据要忠于原文：文档写「A 型号支持 X」，
+  就不能写成「全系都支持 X」；把别人的经验说成官方结论也算歪曲。证据不足就明说不确定，宁可不回。
 
 输出严格 JSON（不要任何解释性前后缀、不要 Markdown 围栏）：
-{"results":[{"tid":"帖子ID","should_reply":true或false,"kind":"text或emoji","reply":"回复正文","reason":"判断理由，20字内"}]}
+{"results":[{"tid":"帖子ID","should_reply":true或false,
+"kind":"text或emoji或casual","format":"plain或steps",
+"answer_mode":"direct或probe或emoji或casual","confidence":"high或medium或low",
+"evidence_used":["证据 ref，没有就空数组"],
+"media":"允许的图文代码，不用就空字符串",
+"reply":"回复正文","reason":"判断理由，20字内"}]}
 tid 必须与输入的 tid 完全一致，每篇帖子恰好一条结果。"""
 
 # 未配置 AI Key 时，只在演示/显式允许时使用；必须命中技术关键词才回
@@ -481,6 +616,61 @@ class Config:
     debug: bool = False
     success_markers: tuple[str, ...] = DEFAULT_SUCCESS_MARKERS
     fail_markers: tuple[str, ...] = DEFAULT_FAIL_MARKERS
+    # ---- A：已有楼层 ----
+    fetch_replies: bool = True
+    max_floors: int = 8
+    floor_chars: int = 300
+    skip_solved: bool = True
+    # ---- B：保守模式 ----
+    conservative: bool = True
+    require_evidence: bool = True
+    # ---- 水帖 / 图文 / 重访 ----
+    allow_casual_reply: bool = True
+    max_casual: int = 1
+    allow_media: bool = True
+    media_codes: tuple[str, ...] = DEFAULT_MEDIA_CODES
+    recheck_replied: bool = True
+    recheck_limit: int = 3
+    revisit_hours: float = 168.0
+    my_username: str = ""
+    # ---- D：检索层 ----
+    search_enabled: bool = True
+    # 默认带联网源：未配各自 Key 时它们直接返回空、不发任何请求；
+    # 一旦填了 Key，知识库查不到证据时就会自动联网补查。
+    search_providers: tuple[str, ...] = ("ugnas-kb", "tavily", "baidu")
+    search_max_queries: int = 8
+    search_max_evidence: int = 4
+    search_snippet_chars: int = 400
+    search_total_chars: int = 1800
+    search_min_relevance: float = 0.12
+    search_language: str = KB_DEFAULT_LANGUAGE
+    search_delay: float = 0.8
+    search_timeout: int = 20
+    kb_fetch_detail: bool = True
+    kb_detail_limit: int = 1
+    web_fallback_threshold: int = 1
+    local_kb_dir: Path = SCRIPT_DIR / "knowledge"
+    tavily_key: str = ""
+    bing_key: str = ""
+    searxng_url: str = ""
+    baidu_search_key: str = ""
+    baidu_search_url: str = "https://qianfan.baidubce.com/v2/ai_search/web_search"
+    baidu_search_engine: str = "baidu_search"
+    baidu_top_k: int = 5
+    baidu_results_path: str = ""
+    baidu_auth_header: str = "Authorization"
+    baidu_auth_scheme: str = "Bearer"
+    baidu_headers: dict = field(default_factory=dict)
+    custom_search_url: str = ""
+    custom_results_path: str = "results"
+    custom_title_field: str = "title"
+    custom_snippet_field: str = "content"
+    custom_url_field: str = "url"
+    custom_headers: dict = field(default_factory=dict)
+
+    @property
+    def search_ready(self) -> bool:
+        return self.search_enabled and bool(self.search_providers)
 
     @property
     def state_file(self) -> Path:
@@ -579,6 +769,65 @@ class Config:
         cfg.success_markers = split_markers(env_str("UGREEN_SUCCESS_MARKERS"), DEFAULT_SUCCESS_MARKERS)
         cfg.fail_markers = split_markers(env_str("UGREEN_FAIL_MARKERS"), DEFAULT_FAIL_MARKERS)
 
+        # ---- A / B / D 配置 ----
+        cfg.fetch_replies = env_bool("UGREEN_FETCH_REPLIES", True)
+        cfg.max_floors = max(0, env_int("UGREEN_MAX_FLOORS", 8))
+        cfg.floor_chars = max(60, env_int("UGREEN_FLOOR_CHARS", 300))
+        cfg.skip_solved = env_bool("UGREEN_SKIP_SOLVED", True)
+        cfg.conservative = env_bool("UGREEN_CONSERVATIVE", True)
+        cfg.require_evidence = env_bool("UGREEN_REQUIRE_EVIDENCE", True)
+        cfg.allow_casual_reply = env_bool("UGREEN_ALLOW_CASUAL_REPLY", True)
+        cfg.max_casual = max(0, env_int("UGREEN_MAX_CASUAL", 1))
+        cfg.allow_media = env_bool("UGREEN_ALLOW_MEDIA", True)
+        codes = split_markers(env_str("UGREEN_MEDIA_CODES"), DEFAULT_MEDIA_CODES)
+        cfg.media_codes = tuple(c for c in codes if c.startswith("[") and c.endswith("]"))
+        cfg.recheck_replied = env_bool("UGREEN_RECHECK_REPLIED", True)
+        cfg.recheck_limit = max(0, env_int("UGREEN_RECHECK_LIMIT", 3))
+        cfg.revisit_hours = max(1.0, env_float("UGREEN_REVISIT_HOURS", 168.0))
+        cfg.my_username = env_str("UGREEN_MY_USERNAME").lstrip("@")
+
+        cfg.search_enabled = env_bool("UGREEN_SEARCH", True)
+        cfg.search_providers = parse_search_providers(
+            env_str("UGREEN_SEARCH_PROVIDERS") or "ugnas-kb,tavily,baidu")
+        cfg.search_max_queries = max(0, env_int("UGREEN_SEARCH_MAX_QUERIES", 8))
+        cfg.search_max_evidence = max(1, env_int("UGREEN_SEARCH_MAX_EVIDENCE", 4))
+        cfg.search_snippet_chars = max(80, env_int("UGREEN_SEARCH_SNIPPET_CHARS", 400))
+        cfg.search_total_chars = max(200, env_int("UGREEN_SEARCH_TOTAL_CHARS", 1800))
+        cfg.search_min_relevance = max(0.0, min(1.0, env_float(
+            "UGREEN_SEARCH_MIN_RELEVANCE", 0.12)))
+        cfg.search_language = env_str("UGREEN_SEARCH_LANGUAGE") or KB_DEFAULT_LANGUAGE
+        cfg.search_delay = max(0.0, env_float("UGREEN_SEARCH_DELAY", 0.8))
+        cfg.search_timeout = max(5, env_int("UGREEN_SEARCH_TIMEOUT", 20))
+        cfg.kb_fetch_detail = env_bool("UGREEN_KB_DETAIL", True)
+        cfg.kb_detail_limit = max(0, env_int("UGREEN_KB_DETAIL_LIMIT", 1))
+        cfg.web_fallback_threshold = max(0, env_int("UGREEN_WEB_FALLBACK_THRESHOLD", 1))
+        cfg.local_kb_dir = Path(env_str("UGREEN_LOCAL_KB_DIR")
+                                or SCRIPT_DIR / "knowledge")
+        cfg.tavily_key = env_str("TAVILY_API_KEY")
+        cfg.bing_key = (env_str("BING_SEARCH_KEY") or env_str("BING_API_KEY"))
+        cfg.searxng_url = env_str("SEARXNG_URL")
+        cfg.baidu_search_key = (env_str("BAIDU_SEARCH_KEY")
+                                or env_str("QIANFAN_API_KEY")
+                                or env_str("APPBUILDER_TOKEN")
+                                or env_str("BAIDU_API_KEY"))
+        cfg.baidu_search_url = (env_str("BAIDU_SEARCH_URL")
+                                or cfg.baidu_search_url)
+        cfg.baidu_search_engine = (env_str("BAIDU_SEARCH_ENGINE")
+                                   or cfg.baidu_search_engine)
+        cfg.baidu_top_k = max(1, env_int("BAIDU_SEARCH_TOP_K", 5))
+        cfg.baidu_results_path = env_str("BAIDU_SEARCH_RESULTS_PATH")
+        cfg.baidu_auth_header = env_str("BAIDU_AUTH_HEADER") or cfg.baidu_auth_header
+        cfg.baidu_auth_scheme = env_str("BAIDU_AUTH_SCHEME", cfg.baidu_auth_scheme)
+        cfg.baidu_headers = parse_kv_mapping(env_str("BAIDU_SEARCH_HEADERS"),
+                                             "BAIDU_SEARCH_HEADERS")
+        cfg.custom_search_url = env_str("UGREEN_SEARCH_CUSTOM_URL")
+        cfg.custom_results_path = env_str("UGREEN_SEARCH_RESULTS_PATH") or "results"
+        cfg.custom_title_field = env_str("UGREEN_SEARCH_TITLE_FIELD") or "title"
+        cfg.custom_snippet_field = env_str("UGREEN_SEARCH_SNIPPET_FIELD") or "content"
+        cfg.custom_url_field = env_str("UGREEN_SEARCH_URL_FIELD") or "url"
+        cfg.custom_headers = parse_kv_mapping(env_str("UGREEN_SEARCH_CUSTOM_HEADERS"),
+                                              "UGREEN_SEARCH_CUSTOM_HEADERS")
+
         # 命令行优先
         if args.fids:
             cfg.fids = [int(x) for x in re.split(r"[,，\s]+", args.fids) if x.isdigit()]
@@ -626,10 +875,171 @@ class Config:
             cfg.mark_state = False
         if args.debug:
             cfg.debug = True
+        if args.no_replies:
+            cfg.fetch_replies = False
+        if args.no_conservative:
+            cfg.conservative = False
+        if args.no_search:
+            cfg.search_enabled = False
+        if args.search_providers:
+            cfg.search_providers = parse_search_providers(args.search_providers)
         # 演练模式默认不动水位，避免把「已处理」时间推走
         if cfg.dry_run and not args.mark:
             cfg.mark_state = False
         return cfg
+
+
+# ---------------------------------------------------------------------------
+# A / B / D 的数据结构与小工具
+# ---------------------------------------------------------------------------
+
+KNOWN_SEARCH_PROVIDERS = (
+    "ugnas-kb", "local", "site", "tavily", "bing", "baidu",
+    "searxng", "custom",
+)
+
+# 中文不分词，用一张常见技术词表兜底提取检索关键词
+TECH_TERMS = (
+    "硬盘休眠", "远程访问", "内网穿透", "端口映射", "端口冲突", "反向代理",
+    "存储池", "快照", "备份", "恢复", "RAID", "ZFS", "硬盘", "SSD", "扩容",
+    "Docker", "Compose", "容器", "镜像", "虚拟机", "SSH", "WebDAV", "Samba",
+    "NFS", "SMB", "权限", "共享文件夹", "挂载", "刮削", "相册", "影音",
+    "Jellyfin", "Emby", "Plex", "qBittorrent", "Transmission", "下载",
+    "DDNS", "IPv6", "公网", "HTTPS", "证书", "域名", "UPnP", "网络",
+    "固件", "升级", "重启", "登录失败", "无法访问", "识别不到", "掉盘",
+    "风扇", "噪音", "功耗", "UPS", "外接", "USB", "手机", "客户端",
+    "UGOS Pro", "UGOS", "Syncthing", "Alist", "Home Assistant", "Nginx",
+)
+
+
+def parse_search_providers(raw: str) -> tuple[str, ...]:
+    out: list[str] = []
+    for part in re.split(r"[,，\s]+", (raw or "").lower()):
+        p = part.strip()
+        if not p or p in ("none", "off", "0", "no"):
+            continue
+        if p not in KNOWN_SEARCH_PROVIDERS:
+            log(f"  忽略未知检索源 {p}（可用：{', '.join(KNOWN_SEARCH_PROVIDERS)}）")
+            continue
+        if p not in out:
+            out.append(p)
+    return tuple(out)
+
+
+@dataclass
+class Reply:
+    """帖子详情页里一条已有楼层回复。"""
+    floor: str = ""
+    author: str = ""
+    when: str = ""
+    text: str = ""
+    is_op: bool = False
+
+    def as_dict(self) -> dict:
+        return {"floor": self.floor, "author": self.author,
+                "when": self.when, "is_op": self.is_op, "text": self.text}
+
+
+@dataclass
+class Evidence:
+    """一条检索证据。ref 是给模型引用的短编号，绝不写进回复正文。"""
+    ref: str
+    title: str = ""
+    snippet: str = ""
+    source: str = ""
+    url: str = ""
+    score: float = 0.0
+    relevance: float = 0.0     # 与帖子主题的粗粒度相关度，供模型参考
+
+    def as_dict(self) -> dict:
+        return {"ref": self.ref, "title": self.title,
+                "snippet": self.snippet, "source": self.source,
+                "relevance": round(self.relevance, 2)}
+
+
+def extract_keywords(t: Thread, max_kw: int = 6) -> list[str]:
+    """从标题 + 首楼正文里挑出适合检索的词：技术词表优先，再补英文/数字型号。"""
+    text = clean_text(f"{t.title} {t.content[:500]}").lower()
+    found: list[str] = []
+    for term in TECH_TERMS:
+        if term.lower() in text and term not in found:
+            found.append(term)
+        if len(found) >= max_kw:
+            return found[:max_kw]
+    for w in re.findall(r"[a-z][a-z0-9_.+\-]{2,}|\d{3,}", text):
+        w = w.strip("._-+")
+        if (w and w not in SEARCH_STOPWORDS and len(w) <= 24
+                and not any(w in f.lower() for f in found)
+                and w not in found):
+            found.append(w)
+        if len(found) >= max_kw:
+            break
+    return found[:max_kw]
+
+
+def title_bigrams(s: str) -> set[str]:
+    """中文不分词，用标题的 2-gram 集合近似衡量主题重合度。"""
+    s = re.sub(r"[^\w\u4e00-\u9fff]", "", (s or "").lower())
+    return {s[i:i + 2] for i in range(len(s) - 1)}
+
+
+def evidence_relevance(ev: Evidence, t: Thread,
+                       keywords: list[str]) -> float:
+    """粗粒度相关性打分：标题 2-gram 重合 + 关键词是否落在证据标题里。
+
+    官方知识库用的是模糊（fog）检索，输入「硬盘」会返回一堆沾边的文档。
+    如果不先剔掉跑题的，模型很可能把不相关证据当成依据，比不检索更危险。
+    这里只做「主题是否相关」的近似判断，不做语义事实校验。
+    """
+    a = title_bigrams(t.title)
+    b = title_bigrams(ev.title)
+    if not a or not b:
+        return 0.0
+    overlap = len(a & b) / max(1, min(len(a), len(b)))
+    kws = [k.lower() for k in (keywords or [])[:3]]
+    hit = sum(1 for k in kws if k in (ev.title or "").lower())
+    kw_score = hit / max(1, len(kws)) if kws else 0.0
+    return 0.65 * min(1.0, overlap * 2.2) + 0.35 * kw_score
+
+
+def build_search_queries(t: Thread, keywords: list[str]) -> list[str]:
+    """每篇最多两条查询：技术关键词组合 + 标题短语，避免把整段正文塞给搜索引擎。"""
+    queries: list[str] = []
+    if keywords:
+        q = " ".join(keywords[:3]).strip()
+        if q:
+            queries.append(q)
+    title_q = clean_text(re.sub(r"[【\[（(].*?[】\]）)]", " ", t.title or ""))
+    title_q = re.sub(r"[^\w\u4e00-\u9fff\s\-.]", " ", title_q).strip()
+    if len(title_q) >= 4:
+        title_q = " ".join(title_q.split()[:8])
+        if title_q and title_q not in queries:
+            queries.append(title_q)
+    return queries[:2]
+
+
+def stable_ref(prefix: str, seed: str) -> str:
+    """给网页类结果生成可复现的短编号（Python 内建 hash 每次运行会变）。"""
+    h = hashlib.md5((seed or "").encode("utf-8")).hexdigest()[:10]
+    return f"{prefix}:{h}"
+
+
+def dig_json(obj, path: str):
+    """按点分路径取嵌套字段，供自定义检索端点使用（如 organic_results）。"""
+    cur = obj
+    for part in (path or "").split("."):
+        if not part:
+            continue
+        if isinstance(cur, dict):
+            cur = cur.get(part)
+        elif isinstance(cur, list) and part.isdigit():
+            idx = int(part)
+            cur = cur[idx] if idx < len(cur) else None
+        else:
+            return None
+        if cur is None:
+            return None
+    return cur
 
 
 @dataclass
@@ -647,6 +1057,16 @@ class Thread:
     can_reply: bool = False
     detail_ok: bool = False
     skip_reason: str = ""
+    # A / D 的新增字段
+    replies: list[Reply] = field(default_factory=list)
+    likely_solved: bool = False
+    evidence: list[Evidence] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
+    search_note: str = ""
+    # 重访已回复帖
+    revisit: bool = False
+    my_previous_reply: str = ""
+    revisit_reason: str = ""
 
     @property
     def when(self) -> str:
@@ -656,6 +1076,86 @@ class Thread:
 # ---------------------------------------------------------------------------
 # 抓取 / 发帖
 # ---------------------------------------------------------------------------
+
+
+def floor_author(div) -> str:
+    """取楼层作者名。
+
+    绿联社区用的是 comiis 皮肤：用户名在 `a.km_name` 里（虽然 style=display:none，
+    但文本仍在 DOM 中，get_text 能取到）；而 div.authi 里第一个
+    `a[href*="mod=space"]` 是**头像链接**（只有 <img>、没有文本），
+    直接取会拿到空字符串，于是「楼主是否已解决」「是否点名我」全部失效。
+    标准 Discuz 模板则用 `a.xw1`。这里按优先级依次尝试，并跳过空文本。
+    """
+    for sel in ('div.authi a.km_name', 'div.authi a.xw1',
+                'div.authi a[href*="mod=space"]'):
+        for a in div.select(sel):
+            name = clean_text(a.get_text(" ", strip=True))
+            if name:
+                return name
+    return ""
+
+
+def parse_reply_floors(soup: BeautifulSoup, t: Thread,
+                       cfg: Config, max_floors: int = 0) -> list[Reply]:
+    """A：把详情页里已有的楼层回复抽出来（首楼除外）。
+
+    页面结构已实测：div#post_<pid> 是每层楼，正文在 td.t_f#postmessage_<pid>，
+    作者是 div.authi a[href*=mod=space]，楼层号是 a#postnum<pid>，
+    精确时间在 em[id^=authorposton] span[title]。
+    注意 div[id^="post_"] 还会匹配 post_rate_div_xxx（评分层），必须按 id 全数字过滤。
+
+    max_floors > 0 时覆盖 cfg.max_floors（重访帖需要看更多新楼层）。
+    """
+    out: list[Reply] = []
+    if not cfg.fetch_replies or cfg.max_floors <= 0:
+        return out
+    limit = max_floors if max_floors > 0 else cfg.max_floors
+
+    floors: list[tuple] = []
+    for div in soup.select('div[id^="post_"]'):
+        pid = div.get("id", "")
+        if not re.fullmatch(r"post_\d+", pid):
+            continue
+        td = div.select_one('td.t_f[id^="postmessage_"]')
+        if td is not None:
+            floors.append((div, td))
+    if floors and not t.author:
+        # 首楼作者即楼主。列表页兜底和重访帖拿不到 author，这里从详情页回填，
+        # 否则 is_op（楼主是否已表示解决）永远为 False。
+        t.author = floor_author(floors[0][0])
+    floors = floors[1:]      # 第 0 层是首楼，正文已在 t.content
+
+    used = 0
+    for idx, (div, td) in enumerate(floors[:limit], 1):
+        body = clean_text(td.get_text(" ", strip=True))
+        body = REPLY_NOISE_RE.sub("", body).strip()
+        body = re.sub(r"^引用[:：].{0,120}?(?=\s)", "", body).strip()
+        if not body:
+            continue
+        room = min(cfg.floor_chars, REPLY_BUDGET_CHARS - used)
+        if room <= 0:
+            break
+        if len(body) > room:
+            body = body[:room].rstrip() + "…"
+        used += len(body)
+
+        au = floor_author(div)
+        author = au
+        num = div.select_one('a[id^="postnum"]')
+        floor = clean_text(num.get_text(" ", strip=True)) if num else f"{idx}楼"
+        ts = div.select_one('em[id^="authorposton"] span[title]')
+        when = (ts.get("title", "") if ts else "")
+        if not when:
+            em = div.select_one('em[id^="authorposton"]')
+            when = clean_text(em.get_text(" ", strip=True)) if em else ""
+
+        is_op = bool(author and t.author and author == t.author)
+        if is_op and any(k in body for k in SOLVED_MARKERS):
+            t.likely_solved = True
+        out.append(Reply(floor=floor, author=author, when=when,
+                         text=body, is_op=is_op))
+    return out
 
 
 class UgnasClient:
@@ -768,7 +1268,7 @@ class UgnasClient:
         log(f"  板块 fid={fid} 列表页兜底 {len(out)} 篇")
         return list(out.values())
 
-    def fetch_detail(self, t: Thread) -> Thread:
+    def fetch_detail(self, t: Thread, floors: int = 0) -> Thread:
         soup = self._soup(t.url)
         if soup is None:
             return t
@@ -802,6 +1302,13 @@ class UgnasClient:
             t.can_reply = bool(t.formhash and t.reply_action and not closed)
             if closed:
                 t.skip_reason = "主题已关闭"
+
+            # A：已有楼层（同时判断楼主是否已经表示解决）
+            if self.cfg.fetch_replies:
+                t.replies = parse_reply_floors(soup, t, self.cfg, floors)
+                if (t.likely_solved and self.cfg.skip_solved
+                        and not t.skip_reason):
+                    t.skip_reason = "楼主已在楼层里表示问题已解决"
             t.detail_ok = True
         except Exception as exc:  # noqa: BLE001
             log(f"  详情解析异常 tid={t.tid}: {exc}")
@@ -857,11 +1364,393 @@ def classify_reply_response(body: str, status: int,
 
 
 # ---------------------------------------------------------------------------
+# D：检索层
+#
+# 默认只开 ugnas-kb —— 绿联官方知识库 support.ugnas.com 网页端同源的公开只读
+# 接口，零配置即可用。其余 provider 按需用 UGREEN_SEARCH_PROVIDERS 叠加。
+# 所有 provider 都返回 list[Evidence]，失败一律降级为空，绝不中断主流程。
+# ---------------------------------------------------------------------------
+
+
+def kb_headers() -> dict[str, str]:
+    return {"User-Agent": UA, "Accept": "application/json, text/plain, */*",
+            "Origin": "https://support.ugnas.com", "Referer": KB_HOME_URL}
+
+
+def kb_text(raw: str) -> str:
+    """知识库返回的标题/摘要/正文里带 <font> 高亮和 <p>。
+
+    高亮标签必须直接删掉而不是替换成空格，否则「开启<font>硬盘休眠</font>功能」
+    会被切成「开启 硬盘休眠 功能」，影响证据可读性与关键词匹配。
+    """
+    s = re.sub(r"</?font[^>]*>", "", raw or "", flags=re.I)
+    return clean_text(s)
+
+
+def kb_article_detail(article_id: str, cfg: Config) -> str:
+    """取一篇官方文档的完整正文（HTML → 纯文本）。失败返回空串。"""
+    try:
+        r = requests.get(KB_ARTICLE_URL,
+                         params={"articleInfoId": article_id,
+                                 "language": cfg.search_language},
+                         headers=kb_headers(), timeout=cfg.search_timeout)
+        d = r.json()
+        if d.get("code") != 200:
+            return ""
+        return kb_text((d.get("data") or {}).get("content") or "")
+    except Exception as exc:  # noqa: BLE001
+        log(f"  知识库文章详情获取失败 id={article_id}: {exc}")
+        return ""
+
+
+def search_ugnas_kb(query: str, cfg: Config, client=None,
+                    fetch_detail: bool = True) -> list[Evidence]:
+    """绿联官方知识库搜索。已实测参数与返回结构（2026-11）。"""
+    params = {"currentPage": 0, "size": max(3, cfg.search_max_evidence),
+              "keywords": query, "strategy": KB_STRATEGY,
+              "language": cfg.search_language}
+    r = requests.get(KB_SEARCH_URL, params=params, headers=kb_headers(),
+                     timeout=cfg.search_timeout)
+    d = r.json()
+    if d.get("code") != 200:
+        log(f"  知识库搜索返回 code={d.get('code')}：{str(d.get('message'))[:80]}")
+        return []
+    rows = (d.get("data") or {}).get("data") or []
+    out: list[Evidence] = []
+    for i, row in enumerate(rows):
+        # 视频教程没有可引用的正文，跳过
+        if row.get("videoId") and not row.get("articleInfoId"):
+            continue
+        aid = str(row.get("articleInfoId") or row.get("id") or i)
+        title = kb_text(row.get("title") or "")
+        summary = kb_text(row.get("aiSummary") or "")
+        content = kb_text(row.get("contentText") or "")
+        snippet = (summary + " " + content).strip() or content or summary
+        out.append(Evidence(
+            ref=f"kb:{aid}", title=title or f"知识库文章 {aid}",
+            snippet=snippet, source="绿联官方知识库", url=KB_HOME_URL,
+            score=10.0 - i,
+        ))
+    # 只对第一篇取完整正文，把证据做实；其余保留搜索摘要即可
+    if fetch_detail and cfg.kb_fetch_detail and cfg.kb_detail_limit > 0 and out:
+        for ev in out[:cfg.kb_detail_limit]:
+            aid = ev.ref.split(":", 1)[-1]
+            if not aid.isdigit():
+                continue
+            body = kb_article_detail(aid, cfg)
+            if body:
+                ev.snippet = (ev.snippet + " " + body).strip()
+    return out
+
+
+def search_local_kb(query: str, cfg: Config, client=None,
+                    fetch_detail: bool = True) -> list[Evidence]:
+    """本地知识库：读 knowledge/*.md|txt，按 Markdown 标题分块做词频打分。"""
+    d = cfg.local_kb_dir
+    if not d.is_dir():
+        return []
+    terms = [x.lower() for x in re.split(r"[\s,，]+", query) if len(x) > 1]
+    if not terms:
+        return []
+    out: list[Evidence] = []
+    try:
+        files = sorted(list(d.glob("*.md")) + list(d.glob("*.txt")))
+    except OSError:
+        return []
+    for p in files:
+        try:
+            text = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        chunks = re.split(r"(?m)^#{1,4}\s+", text)
+        for i, ch in enumerate(chunks):
+            low = ch.lower()
+            score = sum(low.count(term) for term in terms)
+            if not score:
+                continue
+            lines = [x.strip() for x in ch.splitlines() if x.strip()]
+            title = lines[0][:60] if lines else p.stem
+            body = " ".join(lines[1:]) if len(lines) > 1 else " ".join(lines)
+            out.append(Evidence(ref=f"local:{p.stem}:{i}", title=title,
+                                snippet=body, source=f"本地知识库/{p.name}",
+                                score=float(score)))
+    out.sort(key=lambda e: e.score, reverse=True)
+    return out[:cfg.search_max_evidence]
+
+
+def search_tavily(query: str, cfg: Config, client=None,
+                  fetch_detail: bool = True) -> list[Evidence]:
+    if not cfg.tavily_key:
+        return []
+    r = requests.post("https://api.tavily.com/search",
+                      json={"api_key": cfg.tavily_key, "query": query,
+                            "max_results": cfg.search_max_evidence,
+                            "search_depth": "basic"},
+                      timeout=cfg.search_timeout)
+    rows = (r.json() or {}).get("results") or []
+    return [Evidence(ref=stable_ref("web", str(x.get("url") or x.get("title") or "")),
+                     title=clean_text(x.get("title") or ""),
+                     snippet=clean_text(x.get("content") or ""),
+                     source="Tavily", url=str(x.get("url") or ""),
+                     score=5.0 - i)
+            for i, x in enumerate(rows)]
+
+
+def search_bing(query: str, cfg: Config, client=None,
+                fetch_detail: bool = True) -> list[Evidence]:
+    if not cfg.bing_key:
+        return []
+    r = requests.get("https://api.bing.microsoft.com/v7.0/search",
+                     params={"q": query, "count": cfg.search_max_evidence,
+                             "setLang": cfg.search_language},
+                     headers={"Ocp-Apim-Subscription-Key": cfg.bing_key,
+                              "User-Agent": UA},
+                     timeout=cfg.search_timeout)
+    rows = ((r.json() or {}).get("webPages") or {}).get("value") or []
+    return [Evidence(ref=stable_ref("bing", str(x.get("url") or x.get("name") or "")),
+                     title=clean_text(x.get("name") or ""),
+                     snippet=clean_text(x.get("snippet") or ""),
+                     source="Bing", url=str(x.get("url") or ""),
+                     score=5.0 - i)
+            for i, x in enumerate(rows)]
+
+
+def search_searxng(query: str, cfg: Config, client=None,
+                   fetch_detail: bool = True) -> list[Evidence]:
+    if not cfg.searxng_url:
+        return []
+    url = cfg.searxng_url.rstrip("/") + "/search"
+    r = requests.get(url, params={"q": query, "format": "json",
+                                  "language": cfg.search_language},
+                     headers={"User-Agent": UA}, timeout=cfg.search_timeout)
+    rows = (r.json() or {}).get("results") or []
+    return [Evidence(ref=stable_ref("searx", str(x.get("url") or x.get("title") or "")),
+                     title=clean_text(x.get("title") or ""),
+                     snippet=clean_text(x.get("content") or ""),
+                     source="SearXNG", url=str(x.get("url") or ""),
+                     score=5.0 - i)
+            for i, x in enumerate(rows)]
+
+
+def search_custom(query: str, cfg: Config, client=None,
+                  fetch_detail: bool = True) -> list[Evidence]:
+    """自定义 HTTP 检索端点：URL 里的 {query} 会被替换，否则追加 ?q=。"""
+    if not cfg.custom_search_url:
+        return []
+    url = cfg.custom_search_url
+    params = {}
+    if "{query}" in url:
+        url = url.replace("{query}", quote(query))
+    else:
+        params = {"q": query}
+    headers = {"User-Agent": UA, "Accept": "application/json"}
+    headers.update(cfg.custom_headers)
+    r = requests.get(url, params=params, headers=headers,
+                     timeout=cfg.search_timeout)
+    rows = dig_json(r.json(), cfg.custom_results_path) or []
+    out = []
+    for i, x in enumerate(rows):
+        if not isinstance(x, dict):
+            continue
+        title = clean_text(str(dig_json(x, cfg.custom_title_field) or ""))
+        snippet = clean_text(str(dig_json(x, cfg.custom_snippet_field) or ""))
+        link = str(dig_json(x, cfg.custom_url_field) or "")
+        if not (title or snippet):
+            continue
+        out.append(Evidence(ref=stable_ref("custom", link or title),
+                            title=title, snippet=snippet,
+                            source="自定义检索", url=link, score=4.0 - i))
+    return out
+
+
+def search_baidu(query: str, cfg: Config, client=None,
+                 fetch_detail: bool = True) -> list[Evidence]:
+    """百度检索：默认走百度智能云千帆 AI 搜索（网页端同源的公开搜索接口）。
+
+    端点、认证头、结果数组路径都可配置，因此也能接 AppBuilder 或自建代理。
+    未配 BAIDU_SEARCH_KEY 时直接返回空，不产生任何网络请求。
+    """
+    if not cfg.baidu_search_key:
+        return []
+    body = {
+        "messages": [{"role": "user", "content": query}],
+        "search_source": cfg.baidu_search_engine,
+        "resource_type_filter": [{"type": "web", "top_k": cfg.baidu_top_k}],
+    }
+    scheme = (cfg.baidu_auth_scheme or "").strip()
+    value = (f"{scheme} {cfg.baidu_search_key}".strip()
+             if scheme else cfg.baidu_search_key)
+    headers = {"Content-Type": "application/json", "User-Agent": UA,
+               cfg.baidu_auth_header or "Authorization": value}
+    headers.update(cfg.baidu_headers)
+    r = requests.post(cfg.baidu_search_url, json=body, headers=headers,
+                      timeout=cfg.search_timeout)
+    data = r.json() or {}
+
+    paths = ([cfg.baidu_results_path] if cfg.baidu_results_path
+             else list(BAIDU_RESULT_PATHS))
+    rows = None
+    for path in paths:
+        candidate = dig_json(data, path)
+        if isinstance(candidate, list):
+            rows = candidate
+            break
+
+    out: list[Evidence] = []
+    for i, x in enumerate(rows or []):
+        if not isinstance(x, dict):
+            continue
+        title = clean_text(str(x.get("title") or x.get("name") or ""))
+        snippet = clean_text(str(x.get("content") or x.get("snippet")
+                                 or x.get("summary") or x.get("abstract") or ""))
+        link = str(x.get("url") or x.get("link") or "")
+        if not (title or snippet):
+            continue
+        out.append(Evidence(ref=stable_ref("baidu", link or title),
+                            title=title, snippet=snippet,
+                            source="百度检索", url=link, score=5.0 - i))
+    return out[:cfg.search_max_evidence]
+
+
+def search_site(query: str, cfg: Config, client=None,
+                fetch_detail: bool = True) -> list[Evidence]:
+    """Discuz 站内搜索。游客态会被拒（实测返回「提示信息」页），仅在带 Cookie 时可用。"""
+    if client is None or not cfg.cookie:
+        return []
+    url = (BASE_URL + "search.php?mod=forum&srchtxt=" + quote(query)
+           + "&searchsubmit=yes")
+    r = client.session.get(url, timeout=cfg.search_timeout)
+    r.encoding = "utf-8"
+    soup = BeautifulSoup(r.text, HTML_PARSER)
+    out: list[Evidence] = []
+    for i, li in enumerate(soup.select("li.pbw")[:cfg.search_max_evidence]):
+        a = li.select_one("h3 a") or li.select_one("a[href*='mod=viewthread']")
+        if a is None:
+            continue
+        tid = tid_from_url(a.get("href", ""))
+        out.append(Evidence(ref=f"site:{tid or i}",
+                            title=clean_text(a.get_text(" ", strip=True)),
+                            snippet=clean_text(li.get_text(" ", strip=True))[:400],
+                            source="社区站内搜索",
+                            url=THREAD_URL.format(tid=tid) if tid else "",
+                            score=3.0 - i))
+    return out
+
+
+# 存函数名而不是函数对象：运行时通过 globals() 解析，便于单元测试替换、
+# 也方便后续在不改这里的情况下覆盖某个 provider。
+SEARCH_FUNCS = {
+    "ugnas-kb": "search_ugnas_kb",
+    "local": "search_local_kb",
+    "site": "search_site",
+    "tavily": "search_tavily",
+    "bing": "search_bing",
+    "baidu": "search_baidu",
+    "searxng": "search_searxng",
+    "custom": "search_custom",
+}
+
+
+class Retriever:
+    """按关键词检索、聚合去重、按总字数预算裁剪；同一次运行内做结果缓存。"""
+
+    def __init__(self, cfg: Config, client=None):
+        self.cfg = cfg
+        self.client = client
+        self.cache: dict[tuple[str, str], list[Evidence]] = {}
+        self.calls = 0
+        self.errors: list[str] = []
+
+    def _one(self, provider: str, query: str) -> list[Evidence]:
+        key = (provider, query)
+        if key in self.cache:
+            return list(self.cache[key])
+        fn = globals()[SEARCH_FUNCS[provider]]
+        try:
+            res = list(fn(query, self.cfg, self.client) or [])
+        except Exception as exc:  # noqa: BLE001
+            msg = f"{provider}: {type(exc).__name__} {str(exc)[:90]}"
+            self.errors.append(msg)
+            log(f"  检索源 {provider} 失败（已降级）：{msg}")
+            res = []
+        self.calls += 1
+        self.cache[key] = res
+        if self.cfg.search_delay:
+            time.sleep(self.cfg.search_delay)
+        return list(res)
+
+    def _run_providers(self, providers: list[str], queries: list[str],
+                       merged: dict[str, Evidence]) -> list[str]:
+        notes: list[str] = []
+        for provider in providers:
+            got = 0
+            for q in queries:
+                for ev in self._one(provider, q):
+                    if ev.ref not in merged or ev.score > merged[ev.ref].score:
+                        merged[ev.ref] = ev
+                        got += 1
+            if got:
+                notes.append(f"{provider}={got}")
+        return notes
+
+    def _relevant(self, merged: dict[str, Evidence], t: Thread) -> list[Evidence]:
+        kept = []
+        for ev in merged.values():
+            ev.relevance = evidence_relevance(ev, t, t.keywords)
+            if ev.relevance >= self.cfg.search_min_relevance:
+                kept.append(ev)
+        return sorted(kept, key=lambda e: e.score, reverse=True)
+
+    def collect(self, t: Thread, queries: list[str]) -> list[Evidence]:
+        merged: dict[str, Evidence] = {}
+        primary = [p for p in self.cfg.search_providers if p in KB_FIRST_PROVIDERS]
+        secondary = [p for p in self.cfg.search_providers if p in WEB_PROVIDERS]
+        # 先查一手资料（官方知识库 / 本地 / 站内），明显不够时才动用联网源。
+        # 没配 Key 的联网 provider 会直接返回空，不会产生任何请求。
+        per_source = self._run_providers(primary, queries, merged)
+        kept = self._relevant(merged, t)
+        if len(kept) < self.cfg.web_fallback_threshold and secondary:
+            per_source += self._run_providers(secondary, queries, merged)
+            per_source.append("联网补查")
+            kept = self._relevant(merged, t)
+        t.search_note = " ".join(per_source) or "无命中"
+        # 先剔掉跑题的候选，否则模型会把「沾边」文档当依据
+        dropped = len(merged) - len(kept)
+        if dropped:
+            t.search_note += f"，低相关丢弃{dropped}"
+        out: list[Evidence] = []
+        used = 0
+        for ev in kept[:self.cfg.search_max_evidence]:
+            room = min(self.cfg.search_snippet_chars,
+                       self.cfg.search_total_chars - used)
+            if room <= 0:
+                break
+            snippet = kb_text(ev.snippet)
+            if len(snippet) > room:
+                # 省略号本身也占一个字，否则总字数会超出预算
+                snippet = snippet[:max(0, room - 1)].rstrip() + "…"
+            used += len(snippet)
+            out.append(Evidence(ref=ev.ref, title=ev.title[:80],
+                                snippet=snippet, source=ev.source,
+                                url=ev.url, score=ev.score,
+                                relevance=ev.relevance))
+        return out
+
+
+def describe_evidence(evidences: list[Evidence]) -> str:
+    return (" / ".join(f"{e.ref}《{e.title[:20]}》[{e.relevance:.2f}]"
+                       for e in evidences) or "无")
+
+
+# ---------------------------------------------------------------------------
 # AI 介入
 # ---------------------------------------------------------------------------
 
 
-def ai_payload(threads: list[Thread]) -> list[dict]:
+def ai_payload(threads: list[Thread],
+               cfg: Optional[Config] = None) -> list[dict]:
+    """喂给模型的全部信息：首楼 + 已有楼层 + 检索证据。除此之外模型一无所知。"""
+    codes = list(cfg.media_codes if cfg else DEFAULT_MEDIA_CODES)
     return [{
         "tid": t.tid,
         "title": t.title,
@@ -869,6 +1758,14 @@ def ai_payload(threads: list[Thread]) -> list[dict]:
         "author": t.author,
         "published": t.when,
         "content_preview": t.content[:800],
+        "existing_replies": [r.as_dict() for r in t.replies[:8]],
+        "likely_solved": t.likely_solved,
+        "keywords": t.keywords,
+        "evidence": [e.as_dict() for e in t.evidence],
+        "revisit": t.revisit,
+        "my_previous_reply": t.my_previous_reply[:200],
+        "trigger_reason": t.revisit_reason,
+        "media_codes": codes,
     } for t in threads]
 
 
@@ -890,7 +1787,7 @@ def ai_request_body(batch: list[Thread], cfg: Config) -> dict:
             {"role": "system", "content": cfg.ai_system_prompt},
             {"role": "user", "content":
                 "以下是 %d 篇待回复的帖子，请逐篇判断并输出 JSON：\n\n%s"
-                % (len(batch), json.dumps(ai_payload(batch),
+                % (len(batch), json.dumps(ai_payload(batch, cfg),
                                           ensure_ascii=False, indent=1))},
         ],
         "temperature": cfg.ai_temperature,
@@ -962,6 +1859,39 @@ def describe_ai_config(cfg: Config) -> str:
         f"{'自定义' if cfg.ai_system_prompt != SYSTEM_PROMPT else '内置默认'} "
         f"({len(cfg.ai_system_prompt)} 字)",
         "-" * 68,
+        "上下文（A）与事实约束（B）",
+        f"  已有楼层  : {'开启' if cfg.fetch_replies else '关闭'}，最多 "
+        f"{cfg.max_floors} 楼 / 每楼 {cfg.floor_chars} 字；"
+        f"已解决帖 {'跳过' if cfg.skip_solved else '不跳过'}",
+        f"  保守模式  : {'开启' if cfg.conservative else '关闭'}；"
+        f"下结论必须引用证据 = {'是' if cfg.require_evidence else '否'}",
+        f"  重访已回帖: {'开启' if cfg.recheck_replied else '关闭'}，"
+        f"最多 {cfg.recheck_limit} 篇 / 回溯 {cfg.revisit_hours:g}h；"
+        f"我的用户名 = {cfg.my_username or '(未配置，仅靠更优解触发)'}",
+        f"  水帖/图文  : casual={'允许' if cfg.allow_casual_reply else '禁用'}"
+        f"（每次 ≤{cfg.max_casual} 条），"
+        f"media={'允许' if cfg.allow_media else '禁用'}"
+        f"（白名单 {', '.join(cfg.media_codes) or '空'}）",
+        "-" * 68,
+        "检索（D）",
+        f"  状态      : {'开启' if cfg.search_ready else '关闭'}；"
+        f"源 = {', '.join(cfg.search_providers) or '无'}",
+        f"  配额      : 最多检索 {cfg.search_max_queries} 篇 / 每篇 "
+        f"{cfg.search_max_evidence} 条 / 片段 {cfg.search_snippet_chars} 字 / "
+        f"总预算 {cfg.search_total_chars} 字；间隔 {cfg.search_delay}s",
+        f"  相关性门槛: {cfg.search_min_relevance:.2f}（只丢明显跑题的；"
+        f"其余证据带 relevance 分数交给模型判断）",
+        f"  绿联知识库: {KB_SEARCH_URL}  lang={cfg.search_language}  "
+        f"取全文={'是' if cfg.kb_fetch_detail else '否'}",
+        f"  本地知识库: {cfg.local_kb_dir}",
+        f"  联网补查  : 一手资料不足 {cfg.web_fallback_threshold} 条时触发",
+        f"  联网源    : Tavily={'已配' if cfg.tavily_key else '未配'}  "
+        f"Bing={'已配' if cfg.bing_key else '未配'}  "
+        f"百度={'已配' if cfg.baidu_search_key else '未配'}  "
+        f"SearXNG={'已配' if cfg.searxng_url else '未配'}  "
+        f"自定义={'已配' if cfg.custom_search_url else '未配'}",
+        f"  百度端点  : {cfg.baidu_search_url}",
+        "-" * 68,
     ])
 
 
@@ -990,6 +1920,34 @@ def test_ai(cfg: Config) -> int:
         return 1
 
 
+def test_search(cfg: Config, keyword: str) -> int:
+    """--test-search：只跑检索，不访问社区、不调模型、不发帖。"""
+    if not cfg.search_ready:
+        log("检索未启用（UGREEN_SEARCH=0 或 UGREEN_SEARCH_PROVIDERS=none）")
+        return 1
+    t = Thread(tid="0", title=keyword, content=keyword, forum="诊断")
+    kws = extract_keywords(t)
+    t.keywords = kws
+    queries = build_search_queries(t, kws) or [keyword]
+    log(f"检索自测：来源={cfg.search_providers}，关键词={kws or '（未命中词表）'}")
+    log(f"构造查询：{queries}")
+    retriever = Retriever(cfg, client=None)
+    evs = retriever.collect(t, queries)
+    print("\n" + "=" * 68)
+    print(f"检索结果：{len(evs)} 条证据（HTTP/调用 {retriever.calls} 次）")
+    print("=" * 68)
+    for i, e in enumerate(evs, 1):
+        print(f"{i}. [{e.ref}] {e.title}")
+        print(f"   来源：{e.source}  相关度：{e.score:.1f}")
+        print(f"   {e.snippet[:300]}")
+        print()
+    if retriever.errors:
+        print("降级记录：" + "；".join(retriever.errors))
+    if not evs:
+        print("没有拿到证据。保守模式下模型将只能追问或给排查方向。")
+    return 0 if evs else 1
+
+
 def parse_ai_response(text: str, valid_tids: set[str]) -> dict[str, dict]:
     s = (text or "").strip()
     s = re.sub(r"^```(?:json)?\s*|\s*```$", "", s, flags=re.M).strip()
@@ -1007,13 +1965,39 @@ def parse_ai_response(text: str, valid_tids: set[str]) -> dict[str, dict]:
         tid = str(row.get("tid", "")).strip()
         if tid not in valid_tids:
             continue
-        kind = str(row.get("kind") or "text").strip().lower()
+        raw_kind = str(row.get("kind") or "text").strip().lower()
+        kind = raw_kind if raw_kind in ("emoji", "casual") else "text"
+        confidence = str(row.get("confidence") or "low").strip().lower()
+        if confidence not in ("high", "medium", "low"):
+            confidence = "low"
+        answer_mode = str(row.get("answer_mode") or "probe").strip().lower()
+        if answer_mode not in ("direct", "probe", "emoji", "casual"):
+            answer_mode = "probe"
+        # 形态与模式对齐：表情 / 水帖不该自称在下技术结论
+        if kind in ("emoji", "casual"):
+            answer_mode = "emoji" if kind == "emoji" else "casual"
+            confidence = "low"
+        # 模型可能给自己贴金：没有 high 证据就不允许直接下结论
+        if answer_mode == "direct" and confidence != "high":
+            answer_mode = "probe"
+        raw_used = row.get("evidence_used") or []
+        if isinstance(raw_used, str):
+            raw_used = [raw_used]
+        used = [str(x).strip() for x in raw_used if str(x).strip()][:6]
+        fmt = str(row.get("format") or "plain").strip().lower()
+        if fmt not in ("plain", "steps"):
+            fmt = "plain"
         out[tid] = {
             "tid": tid,
             "should_reply": bool(row.get("should_reply")),
-            "kind": "emoji" if kind == "emoji" else "text",
+            "kind": kind,
             "reply": str(row.get("reply") or "").strip(),
             "reason": str(row.get("reason") or "").strip(),
+            "confidence": confidence,
+            "answer_mode": answer_mode,
+            "evidence_used": used,
+            "format": fmt,
+            "media": str(row.get("media") or "").strip()[:40],
         }
     return out
 
@@ -1037,37 +2021,162 @@ def local_fallback_reply(t: Thread) -> tuple[bool, str, str]:
 
 def sanitize_reply(text: str, recent: list[str],
                    kind: str = "text",
-                   allow_emoji: bool = True) -> tuple[bool, str]:
-    """发出去之前的最后一道闸。
+                   allow_emoji: bool = True,
+                   media: str = "",
+                   media_codes: tuple[str, ...] = (),
+                   allow_casual: bool = True) -> tuple[bool, str]:
+    """发出去之前的最后一道闸：内容安全 + 灌水 + 长度 + 重复 + 图文白名单。
 
-    kind=emoji 时放宽长度限制，允许纯表情 / 表情加短语；但套话、外链、
-    联系方式、AI 自述一律仍拦，且不允许连续三次刷同一个表情。
+    kind=emoji / casual 时放宽长度；但辱骂、不当内容、套话、外链、联系方式、
+    AI 自述一律仍拦，且不允许连续三次刷同一个表情。
     """
     s = (text or "").strip().strip('"“”').strip()
     s = re.sub(r"^```.*?$|```", "", s, flags=re.M).strip()
     if not s:
         return False, "空回复"
+    if ABUSIVE_RE.search(s) or UNSAFE_TOPIC_RE.search(s):
+        return False, "含辱骂 / 违背公序良俗的内容"
     if BAD_REPLY_RE.search(s):
         return False, "含外链 / 联系方式 / AI 自述"
     for cliche in CLICHE_REPLIES:
         if cliche in s:
             return False, f"命中灌水套话：{cliche}"
 
+    # 图文：只接受配置白名单里的论坛代码，其它一律静默忽略
+    extra = ("\n" + media) if (media and media in (media_codes or ())) else ""
+
+    casual_like = (allow_casual and kind == "casual" and len(s) <= 20)
     emoji_like = (allow_emoji and len(s) <= 20
                   and (is_emoji_reply(s) or kind == "emoji"))
+    if casual_like:
+        if len(s) < 2:
+            return False, "水帖回复过短"
+        if len(recent) >= 3 and all(x.strip() == s for x in recent[-3:]):
+            return False, "连续重复同一句"
+        return True, s + extra
+
     if emoji_like:
         if not EMOJI_PATTERN.search(s):
             return False, "标记为表情回复，但正文里没有表情"
         if len(recent) >= 3 and all(x.strip() == s for x in recent[-3:]):
             return False, "连续重复同一个表情"
-        return True, s
+        return True, s + extra
 
     if not (8 <= len(s) <= 200):
         return False, f"长度不合规（{len(s)} 字）"
     for old in recent:
         if SequenceMatcher(None, s, old).ratio() > 0.92:
             return False, "与近期已发回复高度重复"
-    return True, s
+    return True, s + extra
+
+
+def validate_claim(reply: str, d: dict, t: Thread,
+                   cfg: Config) -> tuple[bool, str]:
+    """B：保守模式的硬闸——提示词只是指令，这里才真正拦住无据断言。
+
+    注意：它只能校验「有没有引用真实证据、有没有出现版本号/确定性措辞」，
+    无法判断回复与证据在语义上是否一致；语义一致性仍依赖模型遵守提示词。
+    """
+    if ABUSIVE_RE.search(reply) or UNSAFE_TOPIC_RE.search(reply):
+        return False, "含辱骂 / 违背公序良俗的内容"
+    # 重访帖：内容与上次回复几乎一样就等于没回，直接拦掉
+    if t.revisit and t.my_previous_reply:
+        if SequenceMatcher(None, reply, t.my_previous_reply).ratio() > 0.85:
+            return False, "与上次回复几乎一样，不做重复回复"
+    if not cfg.conservative:
+        return True, ""
+    kind = d.get("kind", "text")
+    emoji = kind in ("emoji", "casual") or is_emoji_reply(reply)
+    valid_refs = {e.ref for e in t.evidence}
+    used = [r for r in d.get("evidence_used", []) if r in valid_refs]
+    bogus = [r for r in d.get("evidence_used", []) if r not in valid_refs]
+    mode = d.get("answer_mode", "probe")
+    confidence = d.get("confidence", "low")
+
+    if bogus:
+        return False, f"引用了不存在的证据编号：{bogus[0]}"
+    if emoji:
+        if VERSION_RE.search(reply) or RISK_CLAIM_RE.search(reply):
+            return False, "表情回复里夹带了技术断言"
+        return True, ""
+
+    if mode == "direct" or confidence == "high":
+        if not t.evidence:
+            return False, "没有检索证据却要下确定性结论"
+        if cfg.require_evidence and not used:
+            return False, "声称有依据但未引用任何有效证据编号"
+        if confidence != "high":
+            return False, "confidence 不是 high 却要下确定性结论"
+
+    if not used:
+        if VERSION_RE.search(reply):
+            return False, "无证据却给出具体版本号 / 参数"
+        if RISK_CLAIM_RE.search(reply):
+            return False, "无证据却下确定性结论或使用官方口径"
+    return True, ""
+
+
+# ---------------------------------------------------------------------------
+# 重访：已回复过的帖子，默认不再回复
+# ---------------------------------------------------------------------------
+
+
+def pick_revisit_candidates(state: dict, cfg: Config,
+                            now: datetime) -> list[Thread]:
+    """从状态文件里挑出「最近回复过、值得回头看看」的帖子。
+
+    需求：回复过的帖子尽量不要再回复，除非被别人点名，或出现了更优的解法。
+    这里只负责选出候选；真正要不要再回，看楼层内容（detect_revisit_trigger）。
+    """
+    replied_map = state.get("replied") or {}
+    cutoff = now - timedelta(hours=cfg.revisit_hours)
+    picked: list[Thread] = []
+
+    def _at(rec) -> str:
+        return rec.get("at", "") if isinstance(rec, dict) else ""
+
+    # 最近回复过的优先
+    items = sorted(replied_map.items(), key=lambda kv: _at(kv[1]), reverse=True)
+    for tid, rec in items:
+        if len(picked) >= cfg.recheck_limit:
+            break
+        if not isinstance(rec, dict):
+            continue
+        try:
+            at = datetime.strptime(_at(rec), "%Y-%m-%d %H:%M:%S")
+        except (TypeError, ValueError):
+            continue
+        if at < cutoff:
+            continue
+        forum = rec.get("forum", "")
+        t = Thread(tid=str(tid), title=rec.get("title", ""), forum=forum,
+                   url=THREAD_URL.format(tid=tid),
+                   published=at,          # 报告里显示为「上次回复时间」
+                   my_previous_reply=rec.get("reply", ""))
+        t.fid = next((f for f, n in DEFAULT_FORUMS.items() if n == forum), 0)
+        picked.append(t)
+    return picked
+
+
+def detect_revisit_trigger(t: Thread, cfg: Config) -> str:
+    """判断已回复过的帖子现在是否值得再回一次，返回触发原因（空串=不回）。
+
+    两种触发：
+      1. 有人点名我——需要配置 UGREEN_MY_USERNAME，否则这一路不生效；
+      2. 新楼层里出现了更优的解法。
+    Discuz 楼层按时间正序排列，末尾几楼最新，所以只看尾部若干层。
+    """
+    if not t.replies:
+        return ""
+    me = (cfg.my_username or "").strip()
+    for r in t.replies[-5:]:
+        text = r.text or ""
+        if me and (f"@{me}" in text or me in text):
+            return f"{r.author or '有人'} 点名了你（@{me}）"
+        hit = next((k for k in BETTER_SOLUTION_MARKERS if k in text), None)
+        if hit:
+            return f"{r.author or '有人'} 提到了更优解法（“{hit}”）"
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -1221,6 +2330,14 @@ def render_report(results: list[dict], cfg: Config,
          f"（每板块各取最新 {cfg.per_forum_limit} 篇）",
          f"候选 {candidates} 篇 / 处理 {len(results)} 篇 / 上限 {cfg.max_replies} 条回复"
          f" / 表情回复 {'允许' if cfg.allow_emoji_reply else '禁用'}",
+         f"上下文：已有楼层 ≤{cfg.max_floors} 楼 / 检索 "
+         f"{'开' if cfg.search_ready else '关'}"
+         f"（{', '.join(cfg.search_providers) or '无'}） / 保守模式 "
+         f"{'开' if cfg.conservative else '关'}",
+         f"重访已回帖 {'开' if cfg.recheck_replied else '关'}"
+         f"（≤{cfg.recheck_limit} 篇 / {cfg.revisit_hours:g}h） / "
+         f"水帖 {'开' if cfg.allow_casual_reply else '关'}（≤{cfg.max_casual}） / "
+         f"图文 {'开' if cfg.allow_media else '关'}",
          "=" * 68, ""]
     if not results:
         L.append("本次没有需要处理的帖子。")
@@ -1228,13 +2345,33 @@ def render_report(results: list[dict], cfg: Config,
         t: Thread = r["thread"]
         L.append(f"{i}. [{t.forum}] {t.title}")
         L.append(f"   {t.when} | {t.author} | {t.url}")
+        if r.get("evidence"):
+            L.append(f"   [检索证据] {describe_evidence(r['evidence'])}")
+        if r.get("confidence"):
+            used = ", ".join(r.get("evidence_used") or []) or "无"
+            L.append(f"   [依据] {r.get('answer_mode', '?')}/"
+                     f"{r.get('confidence')}，引用 {used}")
+        if r.get("revisit"):
+            L.append(f"   [重访] {r.get('revisit_reason', '')}")
         if r.get("skip"):
             L.append(f"   [跳过] {r['skip']}")
+            if r.get("reply"):
+                L.append(f"   [被拦下的回复] {r['reply']}")
             L.append("")
             continue
+        if r.get("floors"):
+            L.append(f"   [已有楼层] {r['floors']} 条")
         if r.get("ai_reason"):
             L.append(f"   [AI 判断] {r['ai_reason']}")
-        tag = " · 表情" if r.get("emoji") else ""
+        tag = ""
+        if r.get("casual"):
+            tag = " · 水帖"
+        elif r.get("emoji"):
+            tag = " · 表情"
+        if r.get("media"):
+            tag += f" · 图文{r['media']}"
+        if r.get("format") == "steps":
+            tag += " · 分步"
         L.append(f"   [回复{tag}] {r.get('reply', '')}")
         L.append(f"   [结果] {r.get('outcome', '')}")
         L.append("")
@@ -1292,6 +2429,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help="打印生效的 AI 配置（密钥脱敏）后退出，不发任何请求")
     ap.add_argument("--test-ai", action="store_true",
                     help="发一条最小请求测试模型连通性后退出")
+    ap.add_argument("--test-search", default="", metavar="关键词",
+                    help="只跑检索并打印证据，不访问社区 / 不调模型 / 不发帖")
+    ap.add_argument("--search-providers", default="",
+                    help="覆盖检索源，如 ugnas-kb,local,tavily；none 可关闭")
+    ap.add_argument("--no-search", action="store_true", help="本次关闭检索")
+    ap.add_argument("--no-replies", action="store_true", help="不抓取已有楼层回复")
+    ap.add_argument("--no-conservative", action="store_true",
+                    help="关闭保守模式（不建议，可能发出无据结论）")
     ap.add_argument("--dry-run", action="store_true", help="强制演练（默认）")
     ap.add_argument("--live", action="store_true", help="真正发送回复")
     ap.add_argument("--mark", action="store_true", help="演练时也更新状态水位")
@@ -1320,6 +2465,8 @@ def main() -> int:
         return 0
     if args.test_ai:
         return test_ai(cfg)
+    if args.test_search.strip():
+        return test_search(cfg, args.test_search.strip())
 
     now = datetime.now()
     state = load_state(cfg)
@@ -1330,6 +2477,16 @@ def main() -> int:
         f"每板块最新 {cfg.per_forum_limit} 篇，回复上限={cfg.max_replies}，"
         f"表情回复={'允许' if cfg.allow_emoji_reply else '禁用'}，"
         f"AI={'已启用' if cfg.use_ai else '未启用'}")
+    log(f"上下文：已有楼层={'抓取' if cfg.fetch_replies else '不抓'}"
+        f"（≤{cfg.max_floors} 楼），"
+        f"检索={'开启' if cfg.search_ready else '关闭'}"
+        f"（{', '.join(cfg.search_providers) or '无'}，≤{cfg.search_max_queries} 篇），"
+        f"保守模式={'开启' if cfg.conservative else '关闭'}")
+    log(f"回复策略：水帖{'允许' if cfg.allow_casual_reply else '禁用'}"
+        f"（≤{cfg.max_casual} 条/次），"
+        f"图文{'允许' if cfg.allow_media else '禁用'}，"
+        f"重访已回帖{'开启' if cfg.recheck_replied else '关闭'}"
+        f"（≤{cfg.recheck_limit} 篇 / {cfg.revisit_hours:g}h 内）")
     if cfg.use_ai:
         log(f"AI 接入：{cfg.ai_model} @ {cfg.ai_base} → {cfg.chat_url}，"
             f"Key={mask_secret(cfg.ai_key)}"
@@ -1383,6 +2540,14 @@ def main() -> int:
     fresh = select_per_forum_latest(fresh, cfg.per_forum_limit)
     log(f"按板块各取最新 {cfg.per_forum_limit} 篇并交错后，共 {len(fresh)} 篇")
 
+    # 已回复过的帖子默认不再回复；这里挑出「最近回过、值得回头看看」的候选，
+    # 真正要不要再回，等抓到楼层内容后再按触发条件判定。
+    revisit_pool: list[Thread] = []
+    if cfg.recheck_replied and cfg.recheck_limit > 0:
+        revisit_pool = pick_revisit_candidates(state, cfg, now)
+        if revisit_pool:
+            log(f"重访候选 {len(revisit_pool)} 篇（最近 {cfg.revisit_hours:g}h 内回复过）")
+
     results: list[dict] = []
     # 超出处理上限的也记录一条跳过原因，报告里能看到全貌
     for t in fresh[cfg.max_detail:]:
@@ -1403,8 +2568,50 @@ def main() -> int:
         elif not t.can_reply and not cfg.dry_run:
             results.append({"thread": t, "skip": "页面未提供可用的回复表单（可能已锁帖）"})
 
+    # 重访：抓详情页看有没有「被点名」或「更优解法」这类新触发条件
+    revisit_ok: list[Thread] = []
+    for t in revisit_pool:
+        client.fetch_detail(t, floors=max(cfg.max_floors, 15))
+        trigger = detect_revisit_trigger(t, cfg)
+        if trigger and not t.skip_reason:
+            t.revisit = True
+            t.revisit_reason = trigger
+            revisit_ok.append(t)
+            log(f"  重访命中 tid={t.tid}：{trigger}")
+        else:
+            t.skip_reason = t.skip_reason or "已回复过，且没有出现新的触发条件"
+        if cfg.request_delay:
+            time.sleep(cfg.request_delay)
+    if revisit_pool:
+        log(f"重访检查完成：{len(revisit_ok)}/{len(revisit_pool)} 篇值得再回")
+
     active = [t for t in todo if not t.skip_reason and (cfg.dry_run or t.can_reply)]
-    log(f"进入 AI 判断 {len(active)} 篇")
+    active += [t for t in revisit_ok if not t.skip_reason and (cfg.dry_run or t.can_reply)]
+    for t in revisit_pool:
+        if not t.revisit:
+            results.append({"thread": t, "skip": t.skip_reason})
+    log(f"进入 AI 判断 {len(active)} 篇"
+        + (f"（已抓到楼层共 {sum(len(t.replies) for t in active)} 条）"
+           if cfg.fetch_replies else ""))
+
+    # D：在调模型之前把资料检索好，注入每篇帖子的 evidence 字段
+    retriever: Optional[Retriever] = None
+    if cfg.search_ready and cfg.search_max_queries > 0 and active:
+        retriever = Retriever(cfg, client)
+        scope = active[:cfg.search_max_queries]
+        log(f"检索证据 {len(scope)} 篇（来源：{', '.join(cfg.search_providers)}）")
+        for i, t in enumerate(scope, 1):
+            t.keywords = extract_keywords(t)
+            queries = build_search_queries(t, t.keywords)
+            if queries:
+                t.evidence = retriever.collect(t, queries)
+            log(f"  [{i}/{len(scope)}] tid={t.tid} "
+                f"关键词={'/'.join(t.keywords[:3]) or '无'} → "
+                f"证据 {len(t.evidence)} 条（{t.search_note}）")
+        if retriever.errors:
+            log(f"  检索降级 {len(retriever.errors)} 次，首条：{retriever.errors[0]}")
+    elif not cfg.search_ready:
+        log("检索未启用：保守模式下模型只能追问或给排查方向，不得下结论")
 
     # AI 批量判断与生成
     decisions: dict[str, dict] = {}
@@ -1431,6 +2638,7 @@ def main() -> int:
         ai_mode = "演练演示已关闭（UGREEN_LOCAL_FALLBACK=0）"
 
     sent = 0
+    casual_used = 0
     for t in active:
         d = decisions.get(t.tid)
         if not d:
@@ -1440,24 +2648,58 @@ def main() -> int:
             results.append({"thread": t, "skip": f"模型判定不值得回复：{d.get('reason', '')}"})
             continue
         kind = d.get("kind", "text")
+        if kind == "casual":
+            if not cfg.allow_casual_reply:
+                results.append({"thread": t, "skip": "水帖回复已被配置禁用"})
+                continue
+            if casual_used >= cfg.max_casual:
+                results.append({"thread": t, "skip": f"水帖回复已达本次上限（{cfg.max_casual} 条）"})
+                continue
+        # 图文代码只从白名单里取，模型塞其它东西一律忽略
+        media = d.get("media", "") if cfg.allow_media else ""
         ok, reply = sanitize_reply(d.get("reply", ""), recent,
-                                   kind=kind, allow_emoji=cfg.allow_emoji_reply)
+                                   kind=kind, allow_emoji=cfg.allow_emoji_reply,
+                                   media=media, media_codes=cfg.media_codes,
+                                   allow_casual=cfg.allow_casual_reply)
         if not ok:
             results.append({"thread": t, "skip": f"回复未通过质检：{reply}"})
             continue
+        # B：保守模式硬闸，拦住没有证据支撑的确定性结论
+        ok, why = validate_claim(reply, d, t, cfg)
+        if not ok:
+            results.append({"thread": t, "skip": f"保守模式拦截：{why}",
+                            "reply": reply, "evidence": t.evidence,
+                            "confidence": d.get("confidence", ""),
+                            "answer_mode": d.get("answer_mode", "")})
+            continue
         is_emoji = kind == "emoji" or is_emoji_reply(reply)
+        is_casual = kind == "casual"
+        meta = {
+            "evidence": t.evidence,
+            "confidence": d.get("confidence", ""),
+            "answer_mode": d.get("answer_mode", ""),
+            "evidence_used": d.get("evidence_used", []),
+            "floors": len(t.replies),
+            "casual": is_casual,
+            "media": media,
+            "format": d.get("format", "plain"),
+            "revisit": t.revisit,
+            "revisit_reason": t.revisit_reason,
+        }
         if sent >= cfg.max_replies:
             results.append({"thread": t, "skip": "已达本次回复上限",
-                            "reply": reply, "emoji": is_emoji})
+                            "reply": reply, "emoji": is_emoji, **meta})
             continue
 
         if cfg.dry_run:
             results.append({"thread": t, "reply": reply, "outcome": "演练：未发送",
                             "ai_reason": d.get("reason", ""), "ok": False,
-                            "emoji": is_emoji})
+                            "emoji": is_emoji, **meta})
             # 演练时也累加去重池，避免报告里出现两句一模一样的模板
             recent.append(reply)
             sent += 1
+            if is_casual:
+                casual_used += 1
             continue
 
         posted, why, body = client.post_reply(t, reply)
@@ -1466,12 +2708,15 @@ def main() -> int:
         results.append({"thread": t, "reply": reply,
                         "outcome": ("发送成功" if posted else f"发送失败：{why}"),
                         "ai_reason": d.get("reason", ""), "ok": posted,
-                        "emoji": is_emoji})
+                        "emoji": is_emoji, **meta})
         if posted:
             sent += 1
+            if is_casual:
+                casual_used += 1
             state.setdefault("replied", {})[t.tid] = {
                 "at": now.strftime("%Y-%m-%d %H:%M:%S"),
                 "forum": t.forum, "title": t.title, "reply": reply,
+                "revisit": bool(t.revisit),
             }
             recent.append(reply)
             if sent < cfg.max_replies:
