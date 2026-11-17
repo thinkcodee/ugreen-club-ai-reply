@@ -8,3 +8,9 @@ ugreen_state.json
 ugreen_log.txt
 *.log
 .pytest_cache/
+
+# 构建产物 / 安装中间物
+build/
+dist/
+*.egg-info/
+.eggs/

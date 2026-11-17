@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 """绿联 NAS 社区 · AI 自动回复（青龙面板 / 本地均可运行）。
 
+本文件由 tools/build_single.py 自动生成 —— 请勿直接修改，
+要改逻辑请改 ugreen/ 包内对应模块，然后重新运行该脚本。
+
 相对于原 ugreen_auto_reply 的修复要点：
   1. 不再用 a[href*="thread-"] 抓帖子（它只会命中页脚的 29/30/104 三个制度帖）。
      默认抓论坛导读（forum.php?mod=guide&view=newthread，不区分板块、按发布时间倒序），
@@ -22,30 +25,29 @@
 
 from __future__ import annotations
 
-import argparse
-import hashlib
 import importlib.util
-import json
 import os
-import random
-import re
 import subprocess
 import sys
+from pathlib import Path
+import re
+from datetime import datetime
+from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
+from typing import Optional
+from urllib.parse import urlsplit
+import json
+from dataclasses import dataclass, field
+import hashlib
+from urllib.parse import urljoin
 import time
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from urllib.parse import quote
 from difflib import SequenceMatcher
-from email.utils import parsedate_to_datetime
-from pathlib import Path
-from typing import Optional
-from urllib.parse import quote, urljoin, urlsplit
+import argparse
+import random
 
-# ---------------------------------------------------------------------------
-# 依赖自检（青龙容器里一般能 pip；可用 UGREEN_AUTO_INSTALL_DEPS=0 关闭）
-# ---------------------------------------------------------------------------
-
-
+# ===== core/deps =====
 def _install_deps(packages: list[str]) -> bool:
     print(f"[依赖] 缺少 {', '.join(packages)}，尝试自动安装 ...", flush=True)
     try:
@@ -83,10 +85,7 @@ except ImportError:
     HTML_PARSER = "html.parser"
 
 
-# ---------------------------------------------------------------------------
-# 常量
-# ---------------------------------------------------------------------------
-
+# ===== core/constants =====
 BASE_URL = "https://club.ugnas.com/"
 RSS_URL = BASE_URL + "forum.php?mod=rss&fid={fid}&auth=0"
 FORUM_URL = BASE_URL + "forum.php?mod=forumdisplay&fid={fid}"
@@ -164,7 +163,6 @@ BAD_REPLY_RE = re.compile(
     re.I,
 )
 
-# ---- A：已有楼层 / 已解决识别 -------------------------------------------
 SOLVED_MARKERS = (
     "已解决", "解决了", "搞定了", "已经好了", "可以了", "问题已排除",
     "按你说的改好了", "找到原因了", "多谢，好了", "谢谢，好了", "结帖",
@@ -185,7 +183,6 @@ BETTER_SOLUTION_MARKERS = (
     "根本原因是", "官方给出了",
 )
 
-# ---- 安全 / 公序良俗：提示词之外的本地硬闸 -------------------------------
 ABUSIVE_RE = re.compile(
     r"傻[逼bB叉吊]|煞笔|沙雕|废物|蠢货|白痴|智障|脑残|残废|滚蛋|去死|"
     r"狗东西|狗腿子|贱人|婊子|妓女|操你妈|草泥马|"
@@ -208,7 +205,6 @@ WEB_PROVIDERS = frozenset({"tavily", "bing", "baidu", "searxng", "custom"})
 BAIDU_RESULT_PATHS = ("references", "data.references", "result.references",
                       "results", "data.results", "data", "search_results")
 
-# ---- B：保守模式的事实性红线 ---------------------------------------------
 # 版本号 / 固件号 / 具体参数：没有证据时出现一律拦截
 VERSION_RE = re.compile(
     r"\b\d+\.\d+(?:\.\d+){0,3}\b|v\d+\.\d+|\bUGOS\s*Pro?\s*\d|"
@@ -224,7 +220,6 @@ RISK_CLAIM_RE = re.compile(
     r"根据官方(?:文档|说明)|官方文档(?:显示|说明)",
 )
 
-# ---- D：检索层 -----------------------------------------------------------
 # 绿联官方知识库（support.ugnas.com 网页端同源的公开只读接口，已实测 2026-11）
 KB_HOME_URL = "https://support.ugnas.com/knowledgecenter/"
 KB_SEARCH_URL = ("https://api.ugnas.com/api/system/knowledge_center/"
@@ -257,6 +252,8 @@ UA = (
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 )
 
+# 仓库根目录：src/ugreen/core/constants.py -> src/ugreen/core -> src/ugreen -> src -> 仓库根
+# 打包成单文件后由 tools/build_single.py 替换为脚本所在目录。
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 SYSTEM_PROMPT = """你是绿联 NAS 社区的一位热心老用户，熟悉 UGOS Pro、Docker 容器、硬盘与存储、网络与远程访问、影音与备份等常见玩法。
@@ -378,9 +375,7 @@ DEFAULT_FAIL_MARKERS = (
     "禁止发言", "您所在的组", "请勿重复",
 )
 
-# ---------------------------------------------------------------------------
 # AI 接入配置：厂商预设 + 环境变量别名（按优先级取第一个非空值）
-# ---------------------------------------------------------------------------
 
 DEFAULT_AI_BASE = "https://api.siliconflow.cn/v1"
 DEFAULT_AI_MODEL = "deepseek-ai/DeepSeek-V3"
@@ -422,11 +417,7 @@ AI_ENDPOINT_ALIASES = ("AI_ENDPOINT", "AI_CHAT_URL", "OPENAI_CHAT_URL", "LLM_END
 AI_PROVIDER_ALIASES = ("AI_PROVIDER", "LLM_PROVIDER", "UGREEN_AI_PROVIDER")
 
 
-# ---------------------------------------------------------------------------
-# 小工具
-# ---------------------------------------------------------------------------
-
-
+# ===== util/envutil =====
 def log(msg: str) -> None:
     print(f"[{datetime.now():%H:%M:%S}] {msg}", flush=True)
 
@@ -467,6 +458,7 @@ def env_fids() -> list[int]:
     return out or list(DEFAULT_FORUMS)
 
 
+# ===== util/textutil =====
 def clean_text(s: str) -> str:
     s = re.sub(r"<[^>]+>", " ", s or "")
     for a, b in (("&nbsp;", " "), ("&amp;", "&"), ("&quot;", '"'),
@@ -488,6 +480,23 @@ def clip_text(s: str, limit: int) -> str:
     return s[:max(1, limit - 1)].rstrip() + "…"
 
 
+def truncate_bytes(s: str, limit: int) -> str:
+    b = s.encode("utf-8")
+    if len(b) <= limit:
+        return s
+    tail = "…".encode("utf-8")
+    cut = limit - len(tail)
+    if cut <= 0:
+        return b[:limit].decode("utf-8", errors="ignore")
+    return b[:cut].decode("utf-8", errors="ignore").rstrip() + "…"
+
+
+def split_markers(raw: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    parts = tuple(x.strip() for x in re.split(r"[,，]", raw) if x.strip())
+    return parts or default
+
+
+# ===== util/timeutil =====
 def parse_rss_date(text: str) -> Optional[datetime]:
     """RSS pubDate 是带 +0000 的 UTC，转成脚本运行的本地时区（无 tz 的 naive）。"""
     text = (text or "").strip()
@@ -563,24 +572,7 @@ def parse_guide_time(text: str, abs_date: str = "",
     return None
 
 
-def truncate_bytes(s: str, limit: int) -> str:
-    b = s.encode("utf-8")
-    if len(b) <= limit:
-        return s
-    tail = "…".encode("utf-8")
-    cut = limit - len(tail)
-    if cut <= 0:
-        return b[:limit].decode("utf-8", errors="ignore")
-    return b[:cut].decode("utf-8", errors="ignore").rstrip() + "…"
-
-
-def split_markers(raw: str, default: tuple[str, ...]) -> tuple[str, ...]:
-    parts = tuple(x.strip() for x in re.split(r"[,，]", raw) if x.strip())
-    return parts or default
-
-
-# ---- AI 配置解析工具 -------------------------------------------------------
-
+# ===== util/aiutil =====
 def env_first(names: tuple[str, ...], default: str = "") -> tuple[str, str]:
     """按优先级取第一个非空环境变量，返回 (值, 变量名)。"""
     for name in names:
@@ -666,6 +658,188 @@ def parse_extra_body(raw: str) -> dict:
     return obj
 
 
+# ===== core/models =====
+KNOWN_SEARCH_PROVIDERS = (
+    "ugnas-kb", "local", "site", "tavily", "bing", "baidu",
+    "searxng", "custom",
+)
+
+# 中文不分词，用一张常见技术词表兜底提取检索关键词
+TECH_TERMS = (
+    "硬盘休眠", "远程访问", "内网穿透", "端口映射", "端口冲突", "反向代理",
+    "存储池", "快照", "备份", "恢复", "RAID", "ZFS", "硬盘", "SSD", "扩容",
+    "Docker", "Compose", "容器", "镜像", "虚拟机", "SSH", "WebDAV", "Samba",
+    "NFS", "SMB", "权限", "共享文件夹", "挂载", "刮削", "相册", "影音",
+    "Jellyfin", "Emby", "Plex", "qBittorrent", "Transmission", "下载",
+    "DDNS", "IPv6", "公网", "HTTPS", "证书", "域名", "UPnP", "网络",
+    "固件", "升级", "重启", "登录失败", "无法访问", "识别不到", "掉盘",
+    "风扇", "噪音", "功耗", "UPS", "外接", "USB", "手机", "客户端",
+    "UGOS Pro", "UGOS", "Syncthing", "Alist", "Home Assistant", "Nginx",
+)
+
+
+def parse_search_providers(raw: str) -> tuple[str, ...]:
+    out: list[str] = []
+    for part in re.split(r"[,，\s]+", (raw or "").lower()):
+        p = part.strip()
+        if not p or p in ("none", "off", "0", "no"):
+            continue
+        if p not in KNOWN_SEARCH_PROVIDERS:
+            log(f"  忽略未知检索源 {p}（可用：{', '.join(KNOWN_SEARCH_PROVIDERS)}）")
+            continue
+        if p not in out:
+            out.append(p)
+    return tuple(out)
+
+
+@dataclass
+class Reply:
+    """帖子详情页里一条已有楼层回复。"""
+    floor: str = ""
+    author: str = ""
+    when: str = ""
+    text: str = ""
+    is_op: bool = False
+
+    def as_dict(self) -> dict:
+        return {"floor": self.floor, "author": self.author,
+                "when": self.when, "is_op": self.is_op, "text": self.text}
+
+
+@dataclass
+class Evidence:
+    """一条检索证据。ref 是给模型引用的短编号，绝不写进回复正文。"""
+    ref: str
+    title: str = ""
+    snippet: str = ""
+    source: str = ""
+    url: str = ""
+    score: float = 0.0
+    relevance: float = 0.0     # 与帖子主题的粗粒度相关度，供模型参考
+
+    def as_dict(self) -> dict:
+        return {"ref": self.ref, "title": self.title,
+                "snippet": self.snippet, "source": self.source,
+                "relevance": round(self.relevance, 2)}
+
+
+def extract_keywords(t: Thread, max_kw: int = 6) -> list[str]:
+    """从标题 + 首楼正文里挑出适合检索的词：技术词表优先，再补英文/数字型号。"""
+    text = clean_text(f"{t.title} {t.content[:500]}").lower()
+    found: list[str] = []
+    for term in TECH_TERMS:
+        if term.lower() in text and term not in found:
+            found.append(term)
+        if len(found) >= max_kw:
+            return found[:max_kw]
+    for w in re.findall(r"[a-z][a-z0-9_.+\-]{2,}|\d{3,}", text):
+        w = w.strip("._-+")
+        if (w and w not in SEARCH_STOPWORDS and len(w) <= 24
+                and not any(w in f.lower() for f in found)
+                and w not in found):
+            found.append(w)
+        if len(found) >= max_kw:
+            break
+    return found[:max_kw]
+
+
+def title_bigrams(s: str) -> set[str]:
+    """中文不分词，用标题的 2-gram 集合近似衡量主题重合度。"""
+    s = re.sub(r"[^\w\u4e00-\u9fff]", "", (s or "").lower())
+    return {s[i:i + 2] for i in range(len(s) - 1)}
+
+
+def evidence_relevance(ev: Evidence, t: Thread,
+                       keywords: list[str]) -> float:
+    """粗粒度相关性打分：标题 2-gram 重合 + 关键词是否落在证据标题里。
+
+    官方知识库用的是模糊（fog）检索，输入「硬盘」会返回一堆沾边的文档。
+    如果不先剔掉跑题的，模型很可能把不相关证据当成依据，比不检索更危险。
+    这里只做「主题是否相关」的近似判断，不做语义事实校验。
+    """
+    a = title_bigrams(t.title)
+    b = title_bigrams(ev.title)
+    if not a or not b:
+        return 0.0
+    overlap = len(a & b) / max(1, min(len(a), len(b)))
+    kws = [k.lower() for k in (keywords or [])[:3]]
+    hit = sum(1 for k in kws if k in (ev.title or "").lower())
+    kw_score = hit / max(1, len(kws)) if kws else 0.0
+    return 0.65 * min(1.0, overlap * 2.2) + 0.35 * kw_score
+
+
+def build_search_queries(t: Thread, keywords: list[str]) -> list[str]:
+    """每篇最多两条查询：技术关键词组合 + 标题短语，避免把整段正文塞给搜索引擎。"""
+    queries: list[str] = []
+    if keywords:
+        q = " ".join(keywords[:3]).strip()
+        if q:
+            queries.append(q)
+    title_q = clean_text(re.sub(r"[【\[（(].*?[】\]）)]", " ", t.title or ""))
+    title_q = re.sub(r"[^\w\u4e00-\u9fff\s\-.]", " ", title_q).strip()
+    if len(title_q) >= 4:
+        title_q = " ".join(title_q.split()[:8])
+        if title_q and title_q not in queries:
+            queries.append(title_q)
+    return queries[:2]
+
+
+def stable_ref(prefix: str, seed: str) -> str:
+    """给网页类结果生成可复现的短编号（Python 内建 hash 每次运行会变）。"""
+    h = hashlib.md5((seed or "").encode("utf-8")).hexdigest()[:10]
+    return f"{prefix}:{h}"
+
+
+def dig_json(obj, path: str):
+    """按点分路径取嵌套字段，供自定义检索端点使用（如 organic_results）。"""
+    cur = obj
+    for part in (path or "").split("."):
+        if not part:
+            continue
+        if isinstance(cur, dict):
+            cur = cur.get(part)
+        elif isinstance(cur, list) and part.isdigit():
+            idx = int(part)
+            cur = cur[idx] if idx < len(cur) else None
+        else:
+            return None
+        if cur is None:
+            return None
+    return cur
+
+
+@dataclass
+class Thread:
+    tid: str
+    title: str = ""
+    forum: str = ""
+    fid: int = 0
+    author: str = ""
+    url: str = ""
+    published: Optional[datetime] = None
+    content: str = ""
+    formhash: str = ""
+    reply_action: str = ""
+    can_reply: bool = False
+    detail_ok: bool = False
+    skip_reason: str = ""
+    # A / D 的新增字段
+    replies: list[Reply] = field(default_factory=list)
+    likely_solved: bool = False
+    evidence: list[Evidence] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
+    search_note: str = ""
+    # 重访已回复帖
+    revisit: bool = False
+    my_previous_reply: str = ""
+    revisit_reason: str = ""
+
+    @property
+    def when(self) -> str:
+        return self.published.strftime("%m-%d %H:%M") if self.published else "时间未知"
+
+
+# ===== forum/classify =====
 def is_emoji_reply(s: str) -> bool:
     """纯表情，或「表情 + 不超过 6 个字的短语」。"""
     if not EMOJI_PATTERN.search(s):
@@ -890,9 +1064,8 @@ def select_per_forum_latest(threads: list[Thread], limit: int,
     return picked
 
 
-# ---------------------------------------------------------------------------
+# ===== core/config =====
 # 配置 / 数据结构
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -949,15 +1122,12 @@ class Config:
     debug: bool = False
     success_markers: tuple[str, ...] = DEFAULT_SUCCESS_MARKERS
     fail_markers: tuple[str, ...] = DEFAULT_FAIL_MARKERS
-    # ---- A：已有楼层 ----
     fetch_replies: bool = True
     max_floors: int = 8
     floor_chars: int = 300
     skip_solved: bool = True
-    # ---- B：保守模式 ----
     conservative: bool = True
     require_evidence: bool = True
-    # ---- 水帖 / 图文 / 重访 ----
     allow_casual_reply: bool = True
     max_casual: int = 1
     # 分享帖 / 自荐帖的学习、点赞型回复
@@ -971,7 +1141,6 @@ class Config:
     my_username: str = ""
     # 日志里「最新：xxx」那行的标题显示长度，0 = 完整显示（默认不截断）
     log_title_chars: int = 0
-    # ---- D：检索层 ----
     search_enabled: bool = True
     # 默认带联网源：未配各自 Key 时它们直接返回空、不发任何请求；
     # 一旦填了 Key，知识库查不到证据时就会自动联网补查。
@@ -1054,7 +1223,6 @@ class Config:
         cfg.request_delay = max(0.0, env_float("UGREEN_REQUEST_DELAY", 1.0))
         cfg.timeout = env_int("UGREEN_TIMEOUT", 30)
 
-        # ---- AI：厂商预设 -> 环境变量（含别名） -> 内置默认 ----
         provider, _ = env_first(AI_PROVIDER_ALIASES)
         provider = provider.lower()
         preset_base, preset_model = AI_PROVIDER_PRESETS.get(provider, ("", ""))
@@ -1129,7 +1297,6 @@ class Config:
         cfg.success_markers = split_markers(env_str("UGREEN_SUCCESS_MARKERS"), DEFAULT_SUCCESS_MARKERS)
         cfg.fail_markers = split_markers(env_str("UGREEN_FAIL_MARKERS"), DEFAULT_FAIL_MARKERS)
 
-        # ---- A / B / D 配置 ----
         cfg.fetch_replies = env_bool("UGREEN_FETCH_REPLIES", True)
         cfg.max_floors = max(0, env_int("UGREEN_MAX_FLOORS", 8))
         cfg.floor_chars = max(60, env_int("UGREEN_FLOOR_CHARS", 300))
@@ -1260,195 +1427,7 @@ class Config:
         return cfg
 
 
-# ---------------------------------------------------------------------------
-# A / B / D 的数据结构与小工具
-# ---------------------------------------------------------------------------
-
-KNOWN_SEARCH_PROVIDERS = (
-    "ugnas-kb", "local", "site", "tavily", "bing", "baidu",
-    "searxng", "custom",
-)
-
-# 中文不分词，用一张常见技术词表兜底提取检索关键词
-TECH_TERMS = (
-    "硬盘休眠", "远程访问", "内网穿透", "端口映射", "端口冲突", "反向代理",
-    "存储池", "快照", "备份", "恢复", "RAID", "ZFS", "硬盘", "SSD", "扩容",
-    "Docker", "Compose", "容器", "镜像", "虚拟机", "SSH", "WebDAV", "Samba",
-    "NFS", "SMB", "权限", "共享文件夹", "挂载", "刮削", "相册", "影音",
-    "Jellyfin", "Emby", "Plex", "qBittorrent", "Transmission", "下载",
-    "DDNS", "IPv6", "公网", "HTTPS", "证书", "域名", "UPnP", "网络",
-    "固件", "升级", "重启", "登录失败", "无法访问", "识别不到", "掉盘",
-    "风扇", "噪音", "功耗", "UPS", "外接", "USB", "手机", "客户端",
-    "UGOS Pro", "UGOS", "Syncthing", "Alist", "Home Assistant", "Nginx",
-)
-
-
-def parse_search_providers(raw: str) -> tuple[str, ...]:
-    out: list[str] = []
-    for part in re.split(r"[,，\s]+", (raw or "").lower()):
-        p = part.strip()
-        if not p or p in ("none", "off", "0", "no"):
-            continue
-        if p not in KNOWN_SEARCH_PROVIDERS:
-            log(f"  忽略未知检索源 {p}（可用：{', '.join(KNOWN_SEARCH_PROVIDERS)}）")
-            continue
-        if p not in out:
-            out.append(p)
-    return tuple(out)
-
-
-@dataclass
-class Reply:
-    """帖子详情页里一条已有楼层回复。"""
-    floor: str = ""
-    author: str = ""
-    when: str = ""
-    text: str = ""
-    is_op: bool = False
-
-    def as_dict(self) -> dict:
-        return {"floor": self.floor, "author": self.author,
-                "when": self.when, "is_op": self.is_op, "text": self.text}
-
-
-@dataclass
-class Evidence:
-    """一条检索证据。ref 是给模型引用的短编号，绝不写进回复正文。"""
-    ref: str
-    title: str = ""
-    snippet: str = ""
-    source: str = ""
-    url: str = ""
-    score: float = 0.0
-    relevance: float = 0.0     # 与帖子主题的粗粒度相关度，供模型参考
-
-    def as_dict(self) -> dict:
-        return {"ref": self.ref, "title": self.title,
-                "snippet": self.snippet, "source": self.source,
-                "relevance": round(self.relevance, 2)}
-
-
-def extract_keywords(t: Thread, max_kw: int = 6) -> list[str]:
-    """从标题 + 首楼正文里挑出适合检索的词：技术词表优先，再补英文/数字型号。"""
-    text = clean_text(f"{t.title} {t.content[:500]}").lower()
-    found: list[str] = []
-    for term in TECH_TERMS:
-        if term.lower() in text and term not in found:
-            found.append(term)
-        if len(found) >= max_kw:
-            return found[:max_kw]
-    for w in re.findall(r"[a-z][a-z0-9_.+\-]{2,}|\d{3,}", text):
-        w = w.strip("._-+")
-        if (w and w not in SEARCH_STOPWORDS and len(w) <= 24
-                and not any(w in f.lower() for f in found)
-                and w not in found):
-            found.append(w)
-        if len(found) >= max_kw:
-            break
-    return found[:max_kw]
-
-
-def title_bigrams(s: str) -> set[str]:
-    """中文不分词，用标题的 2-gram 集合近似衡量主题重合度。"""
-    s = re.sub(r"[^\w\u4e00-\u9fff]", "", (s or "").lower())
-    return {s[i:i + 2] for i in range(len(s) - 1)}
-
-
-def evidence_relevance(ev: Evidence, t: Thread,
-                       keywords: list[str]) -> float:
-    """粗粒度相关性打分：标题 2-gram 重合 + 关键词是否落在证据标题里。
-
-    官方知识库用的是模糊（fog）检索，输入「硬盘」会返回一堆沾边的文档。
-    如果不先剔掉跑题的，模型很可能把不相关证据当成依据，比不检索更危险。
-    这里只做「主题是否相关」的近似判断，不做语义事实校验。
-    """
-    a = title_bigrams(t.title)
-    b = title_bigrams(ev.title)
-    if not a or not b:
-        return 0.0
-    overlap = len(a & b) / max(1, min(len(a), len(b)))
-    kws = [k.lower() for k in (keywords or [])[:3]]
-    hit = sum(1 for k in kws if k in (ev.title or "").lower())
-    kw_score = hit / max(1, len(kws)) if kws else 0.0
-    return 0.65 * min(1.0, overlap * 2.2) + 0.35 * kw_score
-
-
-def build_search_queries(t: Thread, keywords: list[str]) -> list[str]:
-    """每篇最多两条查询：技术关键词组合 + 标题短语，避免把整段正文塞给搜索引擎。"""
-    queries: list[str] = []
-    if keywords:
-        q = " ".join(keywords[:3]).strip()
-        if q:
-            queries.append(q)
-    title_q = clean_text(re.sub(r"[【\[（(].*?[】\]）)]", " ", t.title or ""))
-    title_q = re.sub(r"[^\w\u4e00-\u9fff\s\-.]", " ", title_q).strip()
-    if len(title_q) >= 4:
-        title_q = " ".join(title_q.split()[:8])
-        if title_q and title_q not in queries:
-            queries.append(title_q)
-    return queries[:2]
-
-
-def stable_ref(prefix: str, seed: str) -> str:
-    """给网页类结果生成可复现的短编号（Python 内建 hash 每次运行会变）。"""
-    h = hashlib.md5((seed or "").encode("utf-8")).hexdigest()[:10]
-    return f"{prefix}:{h}"
-
-
-def dig_json(obj, path: str):
-    """按点分路径取嵌套字段，供自定义检索端点使用（如 organic_results）。"""
-    cur = obj
-    for part in (path or "").split("."):
-        if not part:
-            continue
-        if isinstance(cur, dict):
-            cur = cur.get(part)
-        elif isinstance(cur, list) and part.isdigit():
-            idx = int(part)
-            cur = cur[idx] if idx < len(cur) else None
-        else:
-            return None
-        if cur is None:
-            return None
-    return cur
-
-
-@dataclass
-class Thread:
-    tid: str
-    title: str = ""
-    forum: str = ""
-    fid: int = 0
-    author: str = ""
-    url: str = ""
-    published: Optional[datetime] = None
-    content: str = ""
-    formhash: str = ""
-    reply_action: str = ""
-    can_reply: bool = False
-    detail_ok: bool = False
-    skip_reason: str = ""
-    # A / D 的新增字段
-    replies: list[Reply] = field(default_factory=list)
-    likely_solved: bool = False
-    evidence: list[Evidence] = field(default_factory=list)
-    keywords: list[str] = field(default_factory=list)
-    search_note: str = ""
-    # 重访已回复帖
-    revisit: bool = False
-    my_previous_reply: str = ""
-    revisit_reason: str = ""
-
-    @property
-    def when(self) -> str:
-        return self.published.strftime("%m-%d %H:%M") if self.published else "时间未知"
-
-
-# ---------------------------------------------------------------------------
-# 抓取 / 发帖
-# ---------------------------------------------------------------------------
-
-
+# ===== forum/client =====
 def floor_author(div) -> str:
     """取楼层作者名。
 
@@ -1816,13 +1795,11 @@ def classify_reply_response(body: str, status: int,
     return False, "响应中未找到成功标记（可用 UGREEN_DEBUG=1 查看响应体）"
 
 
-# ---------------------------------------------------------------------------
-# D：检索层
+# ===== search/providers =====
 #
 # 默认只开 ugnas-kb —— 绿联官方知识库 support.ugnas.com 网页端同源的公开只读
 # 接口，零配置即可用。其余 provider 按需用 UGREEN_SEARCH_PROVIDERS 叠加。
 # 所有 provider 都返回 list[Evidence]，失败一律降级为空，绝不中断主流程。
-# ---------------------------------------------------------------------------
 
 
 def kb_headers() -> dict[str, str]:
@@ -2195,11 +2172,144 @@ def describe_evidence(evidences: list[Evidence]) -> str:
                        for e in evidences) or "无")
 
 
-# ---------------------------------------------------------------------------
-# AI 介入
-# ---------------------------------------------------------------------------
+# ===== ai/quality =====
+def local_fallback_reply(t: Thread) -> tuple[bool, str, str]:
+    """无 AI Key 时的保守兜底，返回 (是否回复, 内容, 形态)。
+
+    只在标题命中明确技术关键词时给排查方向；长篇分享帖若没有可补充的点，
+    就只回一个表情，用来演示 kind=emoji 链路。
+    """
+    text = f"{t.title} {t.content[:200]}".lower()
+    # 分享帖 / 自荐帖：回一句学习、点赞（演示 kind=learn 链路）
+    if is_share_post(t):
+        return True, share_learn_reply(t), "learn"
+    # 长篇教程/科普帖本身已完整，没有可补充的点，先判成表情回复
+    if len(t.content) >= 300 and any(
+            k in t.title for k in ("一览", "分享", "实战", "体验", "盘点", "科普")):
+        return True, "👍", "emoji"
+    for words, reply in LOCAL_FALLBACK_RULES:
+        if any(w.lower() in text for w in words):
+            return True, reply, "text"
+    return False, "", "text"
 
 
+def sanitize_reply(text: str, recent: list[str],
+                   kind: str = "text",
+                   allow_emoji: bool = True,
+                   media: str = "",
+                   media_codes: tuple[str, ...] = (),
+                   allow_casual: bool = True,
+                   share_post: bool = False) -> tuple[bool, str]:
+    """发出去之前的最后一道闸：内容安全 + 灌水 + 长度 + 重复 + 图文白名单。
+
+    kind=emoji / casual 时放宽长度；但辱骂、不当内容、套话、外链、联系方式、
+    AI 自述一律仍拦，且不允许连续三次刷同一个表情。
+
+    固定语料（感谢分享 / 赞一个 / 学习了…）的放行条件：
+      * kind="learn" —— 学习/点赞型回复本身就是这些语料；
+      * share_post=True —— 分享帖 / 自荐帖，作者在分享自己的东西，
+        回一句「感谢分享」是正常互动，不是灌水。
+    技术性回复（kind=text 且非分享帖）里仍然拦，避免刷屏。
+    """
+    s = (text or "").strip().strip('"“”').strip()
+    s = re.sub(r"^```.*?$|```", "", s, flags=re.M).strip()
+    if not s:
+        return False, "空回复"
+    if ABUSIVE_RE.search(s) or UNSAFE_TOPIC_RE.search(s):
+        return False, "含辱骂 / 违背公序良俗的内容"
+    if BAD_REPLY_RE.search(s):
+        return False, "含外链 / 联系方式 / AI 自述"
+    if kind != "learn" and not share_post:
+        for cliche in CLICHE_REPLIES:
+            if cliche in s:
+                return False, f"命中灌水套话：{cliche}"
+
+    # 图文：只接受配置白名单里的论坛代码，其它一律静默忽略
+    extra = ("\n" + media) if (media and media in (media_codes or ())) else ""
+
+    casual_like = (allow_casual and kind == "casual" and len(s) <= 20)
+    emoji_like = (allow_emoji and len(s) <= 20
+                  and (is_emoji_reply(s) or kind == "emoji"))
+    if casual_like:
+        if len(s) < 2:
+            return False, "水帖回复过短"
+        if len(recent) >= 3 and all(x.strip() == s for x in recent[-3:]):
+            return False, "连续重复同一句"
+        return True, s + extra
+
+    if emoji_like:
+        if not EMOJI_PATTERN.search(s):
+            return False, "标记为表情回复，但正文里没有表情"
+        if len(recent) >= 3 and all(x.strip() == s for x in recent[-3:]):
+            return False, "连续重复同一个表情"
+        return True, s + extra
+
+    # 学习/点赞型：允许套话，但要有实质内容且不能和近期回复雷同
+    if kind == "learn":
+        if len(s) < 1:
+            return False, "学习型回复为空"
+        if len(s) > 60:
+            return False, f"学习型回复过长（{len(s)} 字）"
+        for old in recent:
+            if SequenceMatcher(None, s, old).ratio() > 0.92:
+                return False, "与近期已发回复高度重复"
+        return True, s + extra
+
+    if not (8 <= len(s) <= 200):
+        return False, f"长度不合规（{len(s)} 字）"
+    for old in recent:
+        if SequenceMatcher(None, s, old).ratio() > 0.92:
+            return False, "与近期已发回复高度重复"
+    return True, s + extra
+
+
+def validate_claim(reply: str, d: dict, t: Thread,
+                   cfg: Config) -> tuple[bool, str]:
+    """B：保守模式的硬闸——提示词只是指令，这里才真正拦住无据断言。
+
+    注意：它只能校验「有没有引用真实证据、有没有出现版本号/确定性措辞」，
+    无法判断回复与证据在语义上是否一致；语义一致性仍依赖模型遵守提示词。
+    """
+    if ABUSIVE_RE.search(reply) or UNSAFE_TOPIC_RE.search(reply):
+        return False, "含辱骂 / 违背公序良俗的内容"
+    # 重访帖：内容与上次回复几乎一样就等于没回，直接拦掉
+    if t.revisit and t.my_previous_reply:
+        if SequenceMatcher(None, reply, t.my_previous_reply).ratio() > 0.85:
+            return False, "与上次回复几乎一样，不做重复回复"
+    if not cfg.conservative:
+        return True, ""
+    kind = d.get("kind", "text")
+    emoji = kind in ("emoji", "casual", "learn") or is_emoji_reply(reply)
+    valid_refs = {e.ref for e in t.evidence}
+    used = [r for r in d.get("evidence_used", []) if r in valid_refs]
+    bogus = [r for r in d.get("evidence_used", []) if r not in valid_refs]
+    mode = d.get("answer_mode", "probe")
+    confidence = d.get("confidence", "low")
+
+    if bogus:
+        return False, f"引用了不存在的证据编号：{bogus[0]}"
+    if emoji:
+        if VERSION_RE.search(reply) or RISK_CLAIM_RE.search(reply):
+            return False, "表情回复里夹带了技术断言"
+        return True, ""
+
+    if mode == "direct" or confidence == "high":
+        if not t.evidence:
+            return False, "没有检索证据却要下确定性结论"
+        if cfg.require_evidence and not used:
+            return False, "声称有依据但未引用任何有效证据编号"
+        if confidence != "high":
+            return False, "confidence 不是 high 却要下确定性结论"
+
+    if not used:
+        if VERSION_RE.search(reply):
+            return False, "无证据却给出具体版本号 / 参数"
+        if RISK_CLAIM_RE.search(reply):
+            return False, "无证据却下确定性结论或使用官方口径"
+    return True, ""
+
+
+# ===== ai/client =====
 def ai_payload(threads: list[Thread],
                cfg: Optional[Config] = None) -> list[dict]:
     """喂给模型的全部信息：首楼 + 已有楼层 + 检索证据。除此之外模型一无所知。"""
@@ -2676,147 +2786,7 @@ def parse_ai_response(text: str, valid_tids: set[str]) -> dict[str, dict]:
     return out
 
 
-def local_fallback_reply(t: Thread) -> tuple[bool, str, str]:
-    """无 AI Key 时的保守兜底，返回 (是否回复, 内容, 形态)。
-
-    只在标题命中明确技术关键词时给排查方向；长篇分享帖若没有可补充的点，
-    就只回一个表情，用来演示 kind=emoji 链路。
-    """
-    text = f"{t.title} {t.content[:200]}".lower()
-    # 分享帖 / 自荐帖：回一句学习、点赞（演示 kind=learn 链路）
-    if is_share_post(t):
-        return True, share_learn_reply(t), "learn"
-    # 长篇教程/科普帖本身已完整，没有可补充的点，先判成表情回复
-    if len(t.content) >= 300 and any(
-            k in t.title for k in ("一览", "分享", "实战", "体验", "盘点", "科普")):
-        return True, "👍", "emoji"
-    for words, reply in LOCAL_FALLBACK_RULES:
-        if any(w.lower() in text for w in words):
-            return True, reply, "text"
-    return False, "", "text"
-
-
-def sanitize_reply(text: str, recent: list[str],
-                   kind: str = "text",
-                   allow_emoji: bool = True,
-                   media: str = "",
-                   media_codes: tuple[str, ...] = (),
-                   allow_casual: bool = True,
-                   share_post: bool = False) -> tuple[bool, str]:
-    """发出去之前的最后一道闸：内容安全 + 灌水 + 长度 + 重复 + 图文白名单。
-
-    kind=emoji / casual 时放宽长度；但辱骂、不当内容、套话、外链、联系方式、
-    AI 自述一律仍拦，且不允许连续三次刷同一个表情。
-
-    固定语料（感谢分享 / 赞一个 / 学习了…）的放行条件：
-      * kind="learn" —— 学习/点赞型回复本身就是这些语料；
-      * share_post=True —— 分享帖 / 自荐帖，作者在分享自己的东西，
-        回一句「感谢分享」是正常互动，不是灌水。
-    技术性回复（kind=text 且非分享帖）里仍然拦，避免刷屏。
-    """
-    s = (text or "").strip().strip('"“”').strip()
-    s = re.sub(r"^```.*?$|```", "", s, flags=re.M).strip()
-    if not s:
-        return False, "空回复"
-    if ABUSIVE_RE.search(s) or UNSAFE_TOPIC_RE.search(s):
-        return False, "含辱骂 / 违背公序良俗的内容"
-    if BAD_REPLY_RE.search(s):
-        return False, "含外链 / 联系方式 / AI 自述"
-    if kind != "learn" and not share_post:
-        for cliche in CLICHE_REPLIES:
-            if cliche in s:
-                return False, f"命中灌水套话：{cliche}"
-
-    # 图文：只接受配置白名单里的论坛代码，其它一律静默忽略
-    extra = ("\n" + media) if (media and media in (media_codes or ())) else ""
-
-    casual_like = (allow_casual and kind == "casual" and len(s) <= 20)
-    emoji_like = (allow_emoji and len(s) <= 20
-                  and (is_emoji_reply(s) or kind == "emoji"))
-    if casual_like:
-        if len(s) < 2:
-            return False, "水帖回复过短"
-        if len(recent) >= 3 and all(x.strip() == s for x in recent[-3:]):
-            return False, "连续重复同一句"
-        return True, s + extra
-
-    if emoji_like:
-        if not EMOJI_PATTERN.search(s):
-            return False, "标记为表情回复，但正文里没有表情"
-        if len(recent) >= 3 and all(x.strip() == s for x in recent[-3:]):
-            return False, "连续重复同一个表情"
-        return True, s + extra
-
-    # 学习/点赞型：允许套话，但要有实质内容且不能和近期回复雷同
-    if kind == "learn":
-        if len(s) < 1:
-            return False, "学习型回复为空"
-        if len(s) > 60:
-            return False, f"学习型回复过长（{len(s)} 字）"
-        for old in recent:
-            if SequenceMatcher(None, s, old).ratio() > 0.92:
-                return False, "与近期已发回复高度重复"
-        return True, s + extra
-
-    if not (8 <= len(s) <= 200):
-        return False, f"长度不合规（{len(s)} 字）"
-    for old in recent:
-        if SequenceMatcher(None, s, old).ratio() > 0.92:
-            return False, "与近期已发回复高度重复"
-    return True, s + extra
-
-
-def validate_claim(reply: str, d: dict, t: Thread,
-                   cfg: Config) -> tuple[bool, str]:
-    """B：保守模式的硬闸——提示词只是指令，这里才真正拦住无据断言。
-
-    注意：它只能校验「有没有引用真实证据、有没有出现版本号/确定性措辞」，
-    无法判断回复与证据在语义上是否一致；语义一致性仍依赖模型遵守提示词。
-    """
-    if ABUSIVE_RE.search(reply) or UNSAFE_TOPIC_RE.search(reply):
-        return False, "含辱骂 / 违背公序良俗的内容"
-    # 重访帖：内容与上次回复几乎一样就等于没回，直接拦掉
-    if t.revisit and t.my_previous_reply:
-        if SequenceMatcher(None, reply, t.my_previous_reply).ratio() > 0.85:
-            return False, "与上次回复几乎一样，不做重复回复"
-    if not cfg.conservative:
-        return True, ""
-    kind = d.get("kind", "text")
-    emoji = kind in ("emoji", "casual", "learn") or is_emoji_reply(reply)
-    valid_refs = {e.ref for e in t.evidence}
-    used = [r for r in d.get("evidence_used", []) if r in valid_refs]
-    bogus = [r for r in d.get("evidence_used", []) if r not in valid_refs]
-    mode = d.get("answer_mode", "probe")
-    confidence = d.get("confidence", "low")
-
-    if bogus:
-        return False, f"引用了不存在的证据编号：{bogus[0]}"
-    if emoji:
-        if VERSION_RE.search(reply) or RISK_CLAIM_RE.search(reply):
-            return False, "表情回复里夹带了技术断言"
-        return True, ""
-
-    if mode == "direct" or confidence == "high":
-        if not t.evidence:
-            return False, "没有检索证据却要下确定性结论"
-        if cfg.require_evidence and not used:
-            return False, "声称有依据但未引用任何有效证据编号"
-        if confidence != "high":
-            return False, "confidence 不是 high 却要下确定性结论"
-
-    if not used:
-        if VERSION_RE.search(reply):
-            return False, "无证据却给出具体版本号 / 参数"
-        if RISK_CLAIM_RE.search(reply):
-            return False, "无证据却下确定性结论或使用官方口径"
-    return True, ""
-
-
-# ---------------------------------------------------------------------------
-# 重访：已回复过的帖子，默认不再回复
-# ---------------------------------------------------------------------------
-
-
+# ===== forum/revisit =====
 def pick_revisit_candidates(state: dict, cfg: Config,
                             now: datetime) -> list[Thread]:
     """从状态文件里挑出「最近回复过、值得回头看看」的帖子。
@@ -2875,11 +2845,7 @@ def detect_revisit_trigger(t: Thread, cfg: Config) -> str:
     return ""
 
 
-# ---------------------------------------------------------------------------
-# 过滤 / 状态
-# ---------------------------------------------------------------------------
-
-
+# ===== forum/state =====
 def is_blocked(t: Thread, cfg: Config, replied: set[str]) -> str:
     if t.tid in replied:
         return "已回复过"
@@ -2953,11 +2919,7 @@ def save_state(cfg: Config, state: dict, now: datetime,
         log(f"状态写入失败：{exc}")
 
 
-# ---------------------------------------------------------------------------
-# 通知（修正原脚本把 QYWX_AM 当 PushPlus token 的错误）
-# ---------------------------------------------------------------------------
-
-
+# ===== runtime/notify =====
 def notify_via_sendnotify(title: str, content: str) -> bool:
     candidates: list[Path] = []
     ql_dir = env_str("QL_DIR")
@@ -3048,11 +3010,7 @@ def send_notification(title: str, content: str) -> None:
     log("未找到可用推送渠道（sendNotify / QYWX_KEY / QYWX_AM），仅打印日志")
 
 
-# ---------------------------------------------------------------------------
-# 报告
-# ---------------------------------------------------------------------------
-
-
+# ===== runtime/report =====
 def render_report(results: list[dict], cfg: Config,
                   since: datetime, now: datetime,
                   candidates: int, ai_mode: str,
@@ -3155,11 +3113,7 @@ def render_notify(results: list[dict], cfg: Config) -> str:
     return truncate_bytes("\n".join(L), 1900)
 
 
-# ---------------------------------------------------------------------------
-# 主流程
-# ---------------------------------------------------------------------------
-
-
+# ===== runtime/cli =====
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="绿联 NAS 社区 · 六板块 AI 自动回复")
     ap.add_argument("--hours", type=float, default=None, help="只看最近 N 小时的新帖")
@@ -3231,7 +3185,6 @@ def main() -> int:
     replied = set((state.get("replied") or {}).keys())
     recent = list(state.get("recent_replies") or [])
 
-    # ---- 每日配额：跨运行累计，按本地自然日 ----
     today = now.strftime("%Y-%m-%d")
     used_today = daily_used(state, today)
     if cfg.daily_quota > 0:
@@ -3626,7 +3579,6 @@ def main() -> int:
         save_state(cfg, state, now)
 
     return 0
-
 
 if __name__ == "__main__":
     try:

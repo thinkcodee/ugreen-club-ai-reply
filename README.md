@@ -4,6 +4,8 @@
 
 v1.1.0 起增加三层保障：**A** 读已有楼层（避免重复回答、跳过已解决帖）、**B** 保守模式（无证据不得下确定性结论或报版本号）、**D** 可插拔检索（默认查 [绿联官方知识库](https://support.ugnas.com/knowledgecenter/)，可叠加本地知识库 / Tavily / Bing / SearXNG / 站内搜索）。
 
+源码按功能拆分在 `src/ugreen/` 包里（见文末「工程结构」）；仓库根目录的 `ugreen_ai_reply.py` 是自动生成的自包含单文件，**青龙用户只用管它一个文件**，用法与拆分前完全一致。
+
 原始仓库：[silence9527/ugreen_auto_reply](https://github.com/silence9527/ugreen_auto_reply)
 
 ---
@@ -84,6 +86,8 @@ python ugreen_ai_reply.py
 ### 青龙面板
 
 1. 把 `ugreen_ai_reply.py` 放进青龙 `scripts` 目录（订阅管理里填 raw 链接亦可）。
+   - 这个文件是**自包含的单文件产物**（由 `ugreen/` 包自动生成），不需要连带 `ugreen/` 目录。
+   - 想用整仓库开发，把仓库整个拉下来后跑 `python -m ugreen` 也一样。
 2. 依赖管理 → Python3 添加 `requests`、`beautifulsoup4`（`lxml` 可选，装上解析更快）；脚本缺依赖时也会尝试自动装一次。
 3. 环境变量见下表，建议至少配 `UGREEN_COOKIE`、`AI_API_KEY`、`UGREEN_DRY_RUN`。
 4. 定时任务：`task ugreen_ai_reply.py`，建议 `0 9,20 * * *` 之类低频规则；无论任务跑几次，一天累计也不会超过 `UGREEN_DAILY_QUOTA`（默认 10 条）。
@@ -617,11 +621,42 @@ Discuz 模板不同，成功文案可能变化。设 `UGREEN_DEBUG=1` 看响应�
 
 ```
 ugreen-ai-reply/
-├── ugreen_ai_reply.py     # 主脚本（单文件，青龙直接 task 运行）
+├── src/ugreen/             # 实现包（分模块，见下方「工程结构」）
+│   ├── __init__.py         # 包入口，导出公共 API
+│   ├── __main__.py         # 支持 python -m ugreen
+│   ├── core/               # 基础设施
+│   │   ├── constants.py    #   常量与提示词
+│   │   ├── models.py       #   Thread / Reply / Evidence
+│   │   ├── config.py       #   配置对象 Config
+│   │   └── deps.py         #   第三方依赖引导
+│   ├── util/               # 通用工具
+│   │   ├── envutil.py      #   环境变量与日志
+│   │   ├── textutil.py     #   文本清洗与截断
+│   │   ├── timeutil.py     #   时间与链接解析
+│   │   └── aiutil.py       #   AI 端点与密钥解析
+│   ├── forum/              # 论坛交互
+│   │   ├── client.py       #   抓取与发帖
+│   │   ├── classify.py     #   分享帖 / 水贴 / 标题分词
+│   │   ├── state.py        #   状态持久化与每日配额
+│   │   └── revisit.py      #   已回复帖的二次触达
+│   ├── search/             # 资料检索
+│   │   └── providers.py    #   各 provider 与证据聚合
+│   ├── ai/                 # 智能决策
+│   │   ├── client.py       #   模型调用与响应解析
+│   │   └── quality.py      #   回复质检
+│   └── runtime/            # 运行编排
+│       ├── cli.py          #   命令行入口与主流程
+│       ├── notify.py       #   推送渠道
+│       └── report.py       #   报告渲染
+├── ugreen_ai_reply.py      # 单文件产物（自动生成，青龙直接 task 运行）
+├── tools/build_single.py   # 把 src/ugreen/ 打包成上面的单文件
+├── pyproject.toml          # 包元数据（可 pip install -e .）
+├── conftest.py             # 让测试直接导入源码树
 ├── requirements.txt
-├── config.example.env     # 环境变量样例
-├── tests/test_core.py     # 92 项纯离线单测
-├── knowledge/             # 可选：本地知识库 .md/.txt（需加 local 检索源）
+├── config.example.env      # 环境变量样例
+├── tests/test_core.py      # 179 项行为单测
+├── tests/test_package.py   # 16 项工程结构测试
+├── knowledge/              # 可选：本地知识库 .md/.txt（需加 local 检索源）
 └── README.md
 ```
 
@@ -634,3 +669,27 @@ python -m unittest discover -s tests -v
 ```
 
 两个诊断命令都不访问社区、不调模型、不发帖：`--show-config`（打印生效配置，Key 脱敏）与 `--test-search "关键词"`（打印检索证据）。
+
+### 工程结构：为什么要拆成包 + src 布局
+
+源码按功能拆进 `src/ugreen/`，每个模块只管一件事，依赖单向向下：
+
+```
+core（常量/结构/配置）→ util（通用工具）→ forum / search / ai（业务能力）→ runtime（编排）
+```
+
+`core` 与 `util` 是最底层，`runtime` 在最上层，中间三个子包互不反向依赖。这条规则由测试自动校验（`test_dependency_direction`），一旦有人写出反向依赖就会测试失败。
+
+**`src/` 布局**是 Python 官方推荐的工程结构：可被 `import` 的包只在 `src/` 下，仓库根只放「非库文件」（脚本、测试、配置、工具）。好处是本地目录不会意外遮蔽已安装的同名包，测试测到的永远是你写的代码。`tools/`、`tests/` 留在根目录正是这个规则的一部分——它们不是库，不该进 `src/`。
+
+但**青龙用户拿到的仍是单个 `ugreen_ai_reply.py`**——它的内容由 `tools/build_single.py` 把 `src/ugreen/` 各模块按依赖序内联生成，自包含、无相对导入，放进 `scripts` 目录就能跑，和拆分前完全一样。
+
+| 你想做什么 | 怎么做 |
+| --- | --- |
+| 改逻辑 | 改 `src/ugreen/` 下对应模块，然后 `python tools/build_single.py` 重新生成单文件 |
+| 只用不开发 | 直接用 `ugreen_ai_reply.py`，不用管 `src/` 目录 |
+| 本地开发调试 | `pip install -e .` 后 `ugreen-ai-reply --dry-run`，或 `python -m ugreen --dry-run`（需先 `pip install -e .`） |
+| 确认单文件没过期 | `python tools/build_single.py --check`（测试里也会自动校验） |
+
+改动 `src/ugreen/` 后忘了重新构建，测试会直接失败（`test_single_file_is_up_to_date`），不会出现「改了包、跑的还是旧逻辑」这种坑。
+
