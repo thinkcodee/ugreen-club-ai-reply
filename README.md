@@ -6,13 +6,6 @@ v1.1.0 起增加三层保障：**A** 读已有楼层（避免重复回答、跳�
 
 源码按功能拆分在 `src/ugreen/` 包里（见文末「工程结构」）；仓库根目录的 `ugreen_ai_reply.py` 是自动生成的自包含单文件，**青龙用户只用管它一个文件**，用法与拆分前完全一致。
 
-仓库地址：<https://github.com/thinkcodee/ugreen-club-ai-reply>
-
-> 本仓库原名 `ugreen-ai-reply`，已改名为 `ugreen-club-ai-reply`。GitHub 的仓库地址会自动重定向，但**青龙订阅用的 raw 链接不会**——如果你之前订阅过，记得把订阅地址换成新的：
-> `https://raw.githubusercontent.com/thinkcodee/ugreen-club-ai-reply/main/ugreen_ai_reply.py`
-
-原始仓库：[silence9527/ugreen_auto_reply](https://github.com/silence9527/ugreen_auto_reply)
-
 ---
 
 ## 一、先说清楚：默认是演练模式
