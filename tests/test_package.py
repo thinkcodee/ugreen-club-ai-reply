@@ -50,6 +50,17 @@ def load_toml(path: Path) -> dict:
     if m:
         out["project"]["name"] = m.group(1)
 
+    # license = { file = "LICENSE" }  或  license = { text = "MIT" }
+    m = re.search(r"^license\s*=\s*\{(.*?)\}", src, re.S | re.M)
+    if m:
+        body = m.group(1)
+        mf = re.search(r'file\s*=\s*"([^"]+)"', body)
+        mt = re.search(r'text\s*=\s*"([^"]+)"', body)
+        if mf:
+            out["project"]["license"] = {"file": mf.group(1)}
+        elif mt:
+            out["project"]["license"] = {"text": mt.group(1)}
+
     # [project.scripts] 段：命令名 = "模块:函数"
     m = re.search(r"^\[project\.scripts\]\s*$(.*?)(?=^\[|\Z)", src,
                   re.S | re.M)
