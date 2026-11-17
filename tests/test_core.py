@@ -630,6 +630,60 @@ class MainFlowDryRunTest(unittest.TestCase):
         self.assertIn("模型判定不值得回复", out)
         self.assertIn("均未发送", out)
 
+    def test_share_post_gets_learn_reply_even_if_model_skips(self):
+        """模型以软理由跳过分享帖时，脚本按规则补一条学习/点赞回复。"""
+
+        def _thread(tid, title, fid, forum, minutes, content):
+            return m.Thread(tid=tid, title=title, fid=fid, forum=forum,
+                            content=content,
+                            published=datetime.now() - timedelta(minutes=minutes))
+
+        threads = [
+            _thread("7201", "【自荐】给绿联NAS请了一个AI管家 WorkBuddy",
+                    9, "玩法攻略", 10, "自荐内容"),
+            _thread("7202", "【广告】某品牌NAS促销", 9, "玩法攻略", 20, "广告"),
+        ]
+
+        def fake_post(url, **kwargs):
+            body = kwargs.get("json") or {}
+            text = body["messages"][1]["content"]
+            tids = re.findall(r'"tid":\s*"(\d+)"', text)
+            rows = []
+            for tid in tids:
+                if tid == "7201":
+                    # 软理由跳过 —— 应当被脚本补一条 learn 回复
+                    rows.append({"tid": tid, "should_reply": False,
+                                 "kind": "text", "reply": "",
+                                 "reason": "发帖人已自行说明工具用途与用法"})
+                else:
+                    # 硬理由（广告）—— 应当尊重跳过
+                    rows.append({"tid": tid, "should_reply": False,
+                                 "kind": "text", "reply": "", "reason": "广告推广贴"})
+            return self._Resp({"results": rows})
+
+        env = {"AI_API_KEY": "test-key",
+               "AI_BASE_URL": "http://127.0.0.1:9/v1",
+               "UGREEN_DRY_RUN": "1", "UGREEN_NOTIFY": "0",
+               "UGREEN_PER_FORUM_LIMIT": "2",
+               "UGREEN_SEARCH": "0"}
+        argv = ["ugreen_ai_reply.py", "--hours", "48", "--per-forum", "2",
+                "--limit", "3", "--no-notify", "--no-mark"]
+        buf = io.StringIO()
+        with patch.dict(os.environ, env, clear=True), \
+                patch.object(m.UgnasClient, "fetch_rss", return_value=threads), \
+                patch.object(m.UgnasClient, "fetch_detail", side_effect=lambda t: t), \
+                patch.object(m.requests, "post", side_effect=fake_post), \
+                patch.object(sys, "argv", argv), \
+                redirect_stdout(buf):
+            rc = m.main()
+        out = buf.getvalue()
+        self.assertEqual(rc, 0)
+        # 分享帖补了一条 learn 回复
+        self.assertIn("学习点赞", out)
+        self.assertIn("WorkBuddy", out)
+        # 广告帖仍然被跳过
+        self.assertIn("广告推广贴", out)
+
 
 # ===========================================================================
 # A：已有楼层解析
@@ -1544,6 +1598,175 @@ class _R:
 
     def json(self):
         return self._p
+
+
+class SharePostLearnTest(unittest.TestCase):
+    """需求：分享帖 / 自荐帖可以回学习、点赞式回复（kind=learn）。
+
+    同时验证：固定语料（感谢分享 / 赞一个…）从「一律拦死」改成
+    「学习型回复与分享帖里可用，技术性回复里仍然拦」。
+    """
+
+    def _t(self, title, content="", replies=None):
+        return m.Thread(tid="9001", title=title, content=content,
+                         forum="玩法攻略", replies=replies or [])
+
+    # ---- 分享帖识别 ----
+    def test_self_intro_is_share_post(self):
+        self.assertTrue(m.is_share_post(
+            self._t("【自荐】给绿联NAS请了一个AI管家，从此动动嘴就能玩转NAS")))
+
+    def test_sharing_markers_detected(self):
+        for title in ("绿联 NAS 实战｜用 Home Assistant 接入小爱同学",
+                      "NAS 玩法分享：我的远程访问方案",
+                      "Docker 实战：三个容器的 Compose 编排",
+                      "UGOS Pro 科普：硬盘休眠那些事",
+                      "Docker部署【uglog】：绿联 NAS 的日志与状态推送工具",
+                      "手把手教你用 Docker 部署 Jellyfin",
+                      "从零搭建 NAS 家庭影音库"):
+            self.assertTrue(m.is_share_post(self._t(title)), title)
+
+    def test_learn_kind_allows_short_praise(self):
+        """「赞」「nice」「学到了」这类短回应是合法的。"""
+        for s in ("赞", "nice", "学到了", "👍", "赞一个"):
+            ok, out = m.sanitize_reply(s, [], kind="learn")
+            self.assertTrue(ok, s)
+            self.assertEqual(out, s)
+
+    def test_question_post_is_not_share(self):
+        """求助 / 提问帖不能当分享帖，否则会给真问题回一句「感谢分享」。"""
+        for title in ("求个AI Plugins.UPK",
+                      "怎么安装wps office？",
+                      "硬盘休眠问题求助",
+                      "请问这个配置文件怎么改",
+                      "有没有人遇到过同样问题"):
+            self.assertFalse(m.is_share_post(self._t(title)), title)
+
+    def test_share_marker_with_question_word_still_question(self):
+        self.assertFalse(m.is_share_post(self._t("【自荐】请问这个项目怎么用？")))
+
+    def test_tutorial_with_how_in_title_is_share(self):
+        """教程标题里的「如何」不能被当成提问（ZFS特性一览…ZFS如何保护我的数据）。"""
+        self.assertTrue(m.is_share_post(self._t(
+            "【介绍ZFS】ZFS特性一览！一起来看看使用ZFS有哪些好处，"
+            "以及ZFS如何保护我的数据")))
+
+    def test_category_bracket_tag_is_not_share(self):
+        """【学院体验】这类分类标记不代表分享。"""
+        self.assertFalse(m.is_share_post(
+            self._t("【学院体验】关于UGOS PRO学院中的若干表述问题")))
+
+    def test_unknown_title_is_conservative(self):
+        """看不出倾向的标题按提问帖处理 —— 宁可漏回，也不能答非所问。"""
+        for title in ("相册备份", "TV终端播放视频",
+                      "应用程序里面只有安装过的软件 官方的没有了"):
+            self.assertFalse(m.is_share_post(self._t(title)), title)
+
+    # ---- 固定语料的放行条件 ----
+    def test_cliche_allowed_in_learn_kind(self):
+        for s in ("感谢分享，学到了 👍", "赞一个", "学习了，这个思路很妙"):
+            ok, out = m.sanitize_reply(s, [], kind="learn")
+            self.assertTrue(ok, s)
+            self.assertEqual(out, s)
+
+    def test_cliche_allowed_on_share_post(self):
+        """分享帖里即便模型用了 text 形态，固定语料也不该被拦。"""
+        ok, _ = m.sanitize_reply("感谢分享，学到了 👍", [], kind="text",
+                                  share_post=True)
+        self.assertTrue(ok)
+
+    def test_cliche_still_blocked_in_technical_reply(self):
+        """技术性回复（非分享帖）里仍然拦，避免刷屏。"""
+        ok, why = m.sanitize_reply("感谢分享！这个教程太实用了", [])
+        self.assertFalse(ok)
+        self.assertIn("灌水", why)
+
+    def test_learn_kind_still_blocks_unsafe(self):
+        ok, why = m.sanitize_reply("感谢分享，另外这玩法涉及破解版资源", [], kind="learn")
+        self.assertFalse(ok)
+        self.assertTrue("辱骂" in why or "公序良俗" in why)
+
+    def test_learn_kind_still_blocks_link(self):
+        ok, why = m.sanitize_reply("感谢分享，详见 https://example.com", [], kind="learn")
+        self.assertFalse(ok)
+        self.assertIn("外链", why)
+
+    def test_learn_kind_rejects_empty(self):
+        ok, why = m.sanitize_reply("", [], kind="learn")
+        self.assertFalse(ok)
+
+    def test_learn_kind_rejects_duplicate(self):
+        s = "感谢分享，学到了 👍"
+        ok, why = m.sanitize_reply(s, [s], kind="learn")
+        self.assertFalse(ok)
+        self.assertIn("重复", why)
+
+    # ---- 保守模式 ----
+    def test_learn_reply_cannot_contain_tech_claim(self):
+        """学习/点赞型里不能夹带版本号之类的技术断言。"""
+        cfg = m.Config()
+        t = self._t("【自荐】我的工具")
+        d = {"kind": "learn", "answer_mode": "learn", "confidence": "low",
+             "evidence_used": []}
+        ok, why = m.validate_claim("感谢分享，UGOS Pro 4.0.1 支持这个功能", d, t, cfg)
+        self.assertFalse(ok)
+
+    # ---- 生成回复 ----
+    def test_share_learn_reply_mentions_specific_thing(self):
+        r = m.share_learn_reply(
+            self._t("【自荐】给绿联NAS请了一个AI管家 WorkBuddy"))
+        self.assertIn("WorkBuddy", r)
+        self.assertLessEqual(len(r), 60)
+
+    def test_share_learn_reply_generic_fallback(self):
+        r = m.share_learn_reply(self._t("【分享】"))
+        self.assertTrue(r)
+        self.assertIn("感谢分享", r)
+
+    def test_token_extraction_prefers_specific_name(self):
+        """要挑工具名，不能挑「的日志与状态推送工具」这种描述句。"""
+        self.assertEqual(m.extract_title_token("Docker部署【uglog】：日志推送工具"), "uglog")
+        self.assertEqual(
+            m.extract_title_token("【自荐】绿联 NAS 实战｜用 Home Assistant 接入"),
+            "Home Assistant")
+        self.assertEqual(m.extract_title_token("【自荐】给NAS请了一个AI管家 WorkBuddy"),
+                         "WorkBuddy")
+        # 通用词不能被当成名字
+        self.assertNotEqual(m.extract_title_token("NAS 应用设置"), "NAS")
+        # 【介绍ZFS】这种「前缀+专名」只取专名
+        self.assertEqual(m.extract_title_token("【介绍ZFS】ZFS特性一览"), "ZFS")
+        # 描述性长句不能被当成名字
+        self.assertNotIn("玩转", m.extract_title_token(
+            "【自荐】给绿联NAS请了一个AI管家，从此动动嘴就能玩转NAS"))
+
+    def test_already_praised_detects_existing_cheer(self):
+        replies = [m.Reply(floor="2", author="a", text="感谢分享，学到了")]
+        self.assertTrue(m.already_praised(self._t("【自荐】工具", replies=replies)))
+        replies2 = [m.Reply(floor="2", author="a", text="我也有同样的问题，后来解决了")]
+        self.assertFalse(m.already_praised(self._t("【自荐】工具", replies=replies2)))
+
+    # ---- 解析 ----
+    def test_parse_keeps_learn_kind(self):
+        row = {"tid": "9001", "should_reply": True, "kind": "learn",
+               "reply": "感谢分享，学到了", "reason": "自荐帖"}
+        got = m.parse_ai_response(json.dumps({"results": [row]},
+                                             ensure_ascii=False), {"9001"})
+        self.assertEqual(got["9001"]["kind"], "learn")
+        self.assertEqual(got["9001"]["answer_mode"], "learn")
+        self.assertEqual(got["9001"]["confidence"], "low")
+
+    def test_payload_includes_is_share(self):
+        t = self._t("【自荐】我的工具")
+        payload = m.ai_payload([t])
+        self.assertTrue(payload[0]["is_share"])
+        t2 = self._t("求个AI Plugins.UPK")
+        self.assertFalse(m.ai_payload([t2])[0]["is_share"])
+
+    # ---- 配置 ----
+    def test_learn_config_defaults(self):
+        cfg = m.Config()
+        self.assertTrue(cfg.allow_learn_reply)
+        self.assertEqual(cfg.max_learn, 3)
 
 
 if __name__ == "__main__":

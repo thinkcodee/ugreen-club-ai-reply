@@ -108,12 +108,49 @@ BLOCK_TITLE_KEYWORDS = (
     "版规", "社区规则", "管理办法", "违规处理",
 )
 
-# 原脚本的固定语料：出现即视为灌水，拒绝发送
+# 原脚本的固定语料：以前一律当作「灌水」拒绝发送。
+# 现在它们是 **学习/点赞型回复（kind="learn"）的合法素材** ——
+# 分享帖、自荐帖本来就没有技术问题要答，回一句「感谢分享」「赞一个」才是正常社区互动。
+# 但在技术性回复（kind="text"）里仍然拦：那是答案，掺一句套话就是灌水。
 CLICHE_REPLIES = (
     "感谢分享", "支持楼主", "学习了", "我来打卡", "赞一个", "希望官方采纳",
     "这个功能确实值得优化", "建议加个远程端口配置选项", "我也遇到类似情况",
     "太棒了", "这招太骚了", "我抄作业来了", "高手在民间", "大家都是技术人",
     "欢迎交流", "希望你能顺利解决",
+)
+
+# 强分享标记：标题里有这些词，基本可以确定作者是在分享/写教程而不是提问。
+STRONG_SHARE_MARKERS = (
+    "自荐", "分享", "实战", "教程", "手把手", "从零", "攻略", "指南", "实践",
+    "亲测", "评测", "盘点", "一览", "科普", "开箱", "安利", "方案",
+    "踩坑记录", "经验分享", "使用记录", "全流程", "保姆级", "详解",
+)
+# 强求助语气：出现这些的一定是在提问，不管标题里有没有分享字样。
+STRONG_QUESTION_MARKERS = (
+    "求助", "求个", "求教", "请问", "请教", "求推荐", "有没有人", "急啊",
+    "？", "?",
+)
+# 弱求助语气：只在没有强分享标记时才拿来当提问信号。
+# 「如何 / 怎么」在教程标题里极常见（「ZFS如何保护我的数据」），不能单独当提问。
+WEAK_QUESTION_MARKERS = (
+    "怎么", "如何", "为什么", "能不能", "可不可以", "不生效", "报错",
+    "失败", "无法", "出问题", "怎么办", "不进去", "不能", "问题",
+)
+# 方括号里的「分类标记」（学院体验、活动、反馈…）不是分享信号
+CATEGORY_TAG_WORDS = ("学院", "体验", "活动", "反馈", "公告", "问答",
+                       "讨论", "提问", "求助", "教程", "经验")
+# 标题里的方括号标记（【自荐】【uglog】…）也是分享/自荐的强信号
+BRACKET_TAG_RE = re.compile(r"[【\[][^】\]]{2,12}[】\]]")
+# 楼层里已经有人做过「学习/点赞」式回应，就不必再重复
+LEARN_PRAISE_WORDS = (
+    "感谢分享", "学习了", "学到了", "赞一个", "支持楼主", "收藏了", "已收藏",
+    "打卡", "太棒了", "不错", "受教", "nice", "赞",
+)
+# 模型「跳过」的理由里，这些是硬理由（广告/重复/违规），必须尊重，不再补回复；
+# 其余属于「软理由」（没什么可补充、楼主已自行说明…），分享帖仍按规则回一条。
+HARD_SKIP_REASONS = (
+    "广告", "重复", "官方", "制度", "违规", "敏感", "色情", "赌博", "政治",
+    "违法", "已解决", "无需", "别人已", "已有回复", "同名", "转载",
 )
 
 BAD_REPLY_RE = re.compile(
@@ -225,6 +262,7 @@ SYSTEM_PROMPT = """你是绿联 NAS 社区的一位热心老用户，熟悉 UGOS
 每篇帖子包含：tid、title、forum、author、published、content_preview（首楼正文前 800 字）、
 existing_replies（该帖已有的楼层回复，含楼层号/作者/正文）、likely_solved（楼主是否已在楼里表示问题解决）、
 evidence（为你检索到的资料片段，每条带 ref 编号、title、snippet、source、relevance）、keywords；
+is_share（true = 这是分享帖/自荐帖，作者在分享自己的东西而不是提问）；
 重访帖另有 revisit / my_previous_reply / trigger_reason；media_codes 列出允许你使用的图文代码。
 注意：你看不到帖子以外的实时信息，也不会联网。唯一的外部事实来源是 evidence 里的片段。
 evidence 是关键词模糊检索得到的**候选**资料，可能包含与帖子无关的文档。用之前必须先判断
@@ -260,6 +298,20 @@ evidence 是关键词模糊检索得到的**候选**资料，可能包含与帖�
   但只在气氛轻松、确实没别的可补充时才用；每次运行的额度由脚本限制，别滥用。
 - 帖子本身是纯表情/纯打卡内容时优先 casual；内容有价值时按下面的形态回。
 
+【分享帖 / 自荐帖 / 教程帖 —— 要回一条】
+- is_share=true 表示这是分享帖、自荐帖或教程帖：作者在分享自己的东西、写了一份教程，
+  **不是在提问**，所以没有"答案"可给。
+- 这类帖子**不要因为"没有技术问题可答"就跳过**。请用 kind="learn" 回一句
+  学习 / 点赞 / 鼓励的话，可以是「赞」「学到了」「学习了」「nice」「感谢分享」
+  「这个思路很妙」「看着不错，回头试试」这类，也可以带一个表情。
+- **回复内容要贴着帖子的实际内容走**：提到帖子里具体的东西（工具名、做法、亮点），
+  别写放之四海皆准的空话。比如教程贴就说"这个步骤讲得清楚，学到了"，
+  自荐工具就说"看着不错，回头试试"。
+- 但**不要**评价成技术结论，不要断言功能、版本、兼容性 —— 学习/点赞只表达
+  「学到 / 欣赏 / 收藏 / 想试」。
+- 只有下面这些情况才 should_reply=false：广告 / 重复帖 / 内容与标题无关 / 违规内容。
+- 分享帖如果同时也能补充技术点，仍优先给 kind="text" 的实质回复；learn 只在没有实质内容可写时用。
+
 【回复形态与条理】
 - kind="text"：30~160 字，紧扣该帖的具体内容（提到设备、报错、环境或步骤）。
   **条理清晰**：先给一句结论或判断，再给依据或步骤；涉及多步操作时用
@@ -272,6 +324,11 @@ evidence 是关键词模糊检索得到的**候选**资料，可能包含与帖�
 - kind="casual"：水帖/闲聊的简短回应，2~20 字，可以是表情包、论坛表情码或一句轻松的话，
   如 "👍"、"[哈哈]"、"这个我也有同感"。answer_mode="casual"、confidence="low"、evidence_used=[]。
   仍禁止套话、广告、辱骂；**不要对技术提问使用 casual**。
+- kind="learn"：分享帖 / 自荐帖 / 教程帖（is_share=true）的学习、点赞型回应，1~60 字，
+  如「赞」「学到了 👍」「学习了，这个思路很妙」「nice」「感谢分享，已收藏」
+  「「Compose」这个写法学到了」。
+  answer_mode="learn"、confidence="low"、evidence_used=[]。
+  **不要下技术结论、不要提版本号、不要给兼容性断言**，只表达学到 / 欣赏 / 收藏 / 想试。
 - 【图文】需要配图或表情点缀时，可在 media 字段填一个允许的论坛代码（见输入里的 media_codes）。
   脚本只会附加白名单内的代码，其它一律忽略；不要在 reply 里写图片地址或任何链接。
   适度使用，一条回复最多一个，不得借此刷屏。
@@ -286,8 +343,8 @@ evidence 是关键词模糊检索得到的**候选**资料，可能包含与帖�
 
 输出严格 JSON（不要任何解释性前后缀、不要 Markdown 围栏）：
 {"results":[{"tid":"帖子ID","should_reply":true或false,
-"kind":"text或emoji或casual","format":"plain或steps",
-"answer_mode":"direct或probe或emoji或casual","confidence":"high或medium或low",
+"kind":"text或emoji或casual或learn","format":"plain或steps",
+"answer_mode":"direct或probe或emoji或casual或learn","confidence":"high或medium或low",
 "evidence_used":["证据 ref，没有就空数组"],
 "media":"允许的图文代码，不用就空字符串",
 "reply":"回复正文","reason":"判断理由，20字内"}]}
@@ -559,6 +616,191 @@ def is_emoji_reply(s: str) -> bool:
     return len(remainder) <= 6
 
 
+def is_share_post(t: Thread) -> bool:
+    """判断是不是「分享帖 / 自荐帖 / 教程帖」——作者在分享自己的东西，而不是提问。
+
+    判定顺序：
+      1. 强求助语气（求助 / 求个 / 请问 / ？）→ 一律是提问帖，不算分享；
+      2. 强分享标记（自荐、实战、教程、一览、手把手…）→ 算分享帖；
+      3. 标题带方括号标记（【uglog】【介绍ZFS】）→ 算分享帖，
+         但【学院体验】这类**分类标记**要排除；
+      4. 弱求助语气（怎么 / 如何 / 报错…）→ 是提问帖；
+      5. 其余（标题看不出倾向）→ **按提问帖处理**。
+
+    第 5 步刻意保守：宁可漏回一条，也不能给真问题回一句「感谢分享」。
+    「如何 / 怎么」在教程标题里极常见（「ZFS如何保护我的数据」），
+    所以只有当标题没有强分享标记时才拿它们当提问信号。
+
+    注意：这是**脚本层的兜底判定**，真正的判断以模型读内容后的结论为准；
+    模型自己选择 kind="learn" 的帖子，即使这里判成提问帖也不会被拦。
+    """
+    title = t.title or ""
+    if not title:
+        return False
+    if any(q in title for q in STRONG_QUESTION_MARKERS):
+        return False
+    if any(m in title for m in STRONG_SHARE_MARKERS):
+        return True
+    # 标题带方括号标记（如【uglog】【介绍ZFS】）也算分享/自荐的强信号，
+    # 但【学院体验】【活动】这种分类标记要排除
+    for raw in BRACKET_TAG_RE.findall(title):
+        inner = raw[1:-1].strip()
+        if inner and not any(w in inner for w in CATEGORY_TAG_WORDS):
+            return True
+    if any(q in title for q in WEAK_QUESTION_MARKERS):
+        return False
+    return False
+
+
+def already_praised(t: Thread) -> bool:
+    """楼层里是否已经有人做过「学习/点赞」式回应。
+
+    已经有人回过「感谢分享」「学习了」这类话，再回一遍就是刷屏。
+    """
+    for r in t.replies:
+        text = clean_text(r.text or "")
+        if not text:
+            continue
+        if len(text) <= 30 and any(w in text for w in LEARN_PRAISE_WORDS):
+            return True
+    return False
+
+
+def share_learn_reply(t: Thread) -> str:
+    """给分享帖 / 自荐帖 / 教程帖生成一句学习、点赞式回应。
+
+    优先从标题（其次正文开头）里抓一个具体的东西（工具名、项目名、做法），
+    让回复显得真诚而不是空灌；抓不到就退回通用但不失礼的短句。
+    同一帖多次调用结果稳定，避免重复。
+    """
+    title = clean_text(t.title or "")
+    token = extract_title_token(title)
+    if not token:
+        # 标题里没有明显的东西名，就看正文开头
+        token = extract_title_token(clean_text(t.content or "")[:200])
+    # 自荐/推荐类的用「想试」，教程/分享类的用「学到」
+    if any(k in title for k in ("自荐", "推荐", "安利")):
+        tail = "看着不错，回头试试 👍"
+    elif any(k in title for k in ("教程", "实战", "科普", "玩法", "方案")):
+        tail = "这个思路不错，学到了 👍"
+    else:
+        tail = "感谢分享，学到了 👍"
+    if token:
+        return f"「{token}」{tail}"
+    return f"感谢分享，{tail}"
+
+
+# 标题里到处都会出现的通用词，不能拿来当「具体的东西」，否则每条回复都长一个样
+GENERIC_TOKENS = frozenset(
+    "nas ugos docker the and for you com www http https linux shell api app "
+    "pc mac win windows web ui gpu cpu ram ssd hdd usb json yaml tcp udp "
+    "ipv4 ipv6 vpn smb nfs ssh ftp ai nas pro max plus one two".split()
+)
+# 同样无意义的中文通用片段
+GENERIC_CN_TOKENS = frozenset(
+    "绿联 nas 玩法 分享 方案 教程 实战 经验 方法 步骤 使用 安装 部署 配置 "
+    "设置 问题 求助 小白 大佬 折腾 记录 笔记 内容 东西 工具 包 插件 "
+    "数据 时候 东西 方面 情况 效果 感觉 意思 内容 部分".split()
+)
+# 方括号标记里属于「分类标记」的（不是工具名），要排除
+SHARE_TAG_WORDS = ("自荐", "分享", "推荐", "活动", "公告", "教程", "经验",
+                    "讨论", "问答", "求助", "提问", "开箱", "测评", "评测")
+# 中文片段开头常见的虚词/助词，出现在开头说明这不是一个名字
+_CN_PARTICLES = ("的", "了", "把", "给", "和", "与", "就", "也", "都", "很",
+                 "更", "最", "这", "那", "个", "们", "在", "从", "被", "让",
+                 "用", "做", "写", "记", "说", "来", "去", "上", "下", "一",
+                 "请", "求", "新", "老", "小", "大")
+
+
+def _token_score(seg: str) -> int:
+    """给一个候选片段打分：越像「产品名 / 工具名」分越高。"""
+    if not seg or len(seg) < 2:
+        return -1
+    if seg.lower() in GENERIC_TOKENS or seg in GENERIC_CN_TOKENS:
+        return -1
+    has_cjk = any("\u4e00" <= c <= "\u9fff" for c in seg)
+    has_latin = any(c.isascii() and c.isalpha() for c in seg)
+    score = 0
+    if has_latin and has_cjk:
+        # 英文开头 + 中文（AI管家、ZFS特性）比中文开头 + 英文（玩转NAS）更像产品名
+        score += 6 if seg[0].isascii() and seg[0].isalpha() else 4
+    elif has_latin:
+        score += 4
+    else:
+        score += 2
+    if len(seg) > 8:
+        return -1           # 太长的多半是描述句，不是名字
+    # 含有通用词片段的降权（绿联NAS 这种）
+    if any(w in seg for w in GENERIC_CN_TOKENS):
+        score -= 3
+    if seg[0] in _CN_PARTICLES or seg[-1] in _CN_PARTICLES:
+        score -= 4
+    return score
+
+
+def _split_cn_candidates(run: str) -> list[str]:
+    """把一段中文按虚词切开，得到「可能是名字」的短片段。
+
+    例：「我的远程访问方案」→ 去掉开头的「我的」→ 「远程访问方案」。
+    """
+    parts = re.split(f"[{''.join(_CN_PARTICLES)}]", run)
+    out = []
+    for p in parts:
+        p = p.strip()
+        if len(p) >= 2:
+            out.append(p)
+    return out
+
+
+def extract_title_token(title: str) -> str:
+    """从标题里挑一个最能代表「这东西叫什么」的片段。
+
+    优先级：
+      1. 方括号里的非分类标记（如【uglog】）—— 通常就是工具/项目名；
+      2. 多词的英文专名（如 Home Assistant、WorkBuddy）；
+      3. 中英混排或中文的短片段（如 AI管家、远程访问）。
+    排除通用词和虚词开头的片段，避免出现「「的日志与状态推送工具」」这种废话。
+    """
+    if not title:
+        return ""
+    # 1) 方括号标记：【uglog】→ uglog；【介绍ZFS】→ ZFS（去掉「介绍」这类前缀词）
+    for raw in BRACKET_TAG_RE.findall(title):
+        inner = raw[1:-1].strip()
+        if not inner or len(inner) > 20:
+            continue
+        if any(w in inner for w in SHARE_TAG_WORDS):
+            continue
+        if inner.lower() in GENERIC_TOKENS:
+            continue
+        # 【介绍ZFS】这种前缀 + 专名：只取专名部分
+        lat = re.search(r"[A-Za-z][A-Za-z0-9_.\-]{1,19}", inner)
+        if lat and any(w in inner for w in ("介绍", "关于", "浅谈", "谈一谈")):
+            return lat.group(0)
+        return inner
+    # 去掉方括号标记再往下找，否则「自荐」本身会被当成名字
+    core = BRACKET_TAG_RE.sub(" ", title)
+    # 2) 英文专名：允许空格连接的多个首字母大写词
+    best = ""
+    for cand in re.findall(r"[A-Z][A-Za-z0-9_.\-]{2,}(?:\s+[A-Z][A-Za-z0-9_.\-]{2,})*",
+                           core):
+        cand = cand.strip()
+        if cand.lower() in GENERIC_TOKENS:
+            continue
+        if len(cand) > len(best):
+            best = cand
+    if best:
+        return best
+    # 3) 中文 / 中英混排片段：按分隔符切开，逐个打分取最高
+    best_seg = ""
+    best_score = 0
+    for run in re.findall(r"[\u4e00-\u9fffA-Za-z0-9]{2,14}", core):
+        for seg in _split_cn_candidates(run):
+            score = _token_score(seg)
+            if score > best_score or (score == best_score and len(seg) > len(best_seg)):
+                best_seg, best_score = seg, score
+    return best_seg
+
+
 def select_per_forum_latest(threads: list[Thread], limit: int,
                             title_chars: int = 0) -> list[Thread]:
     """每个板块各自取最新的 limit 篇，避免活跃板块把名额全占满。
@@ -652,6 +894,9 @@ class Config:
     # ---- 水帖 / 图文 / 重访 ----
     allow_casual_reply: bool = True
     max_casual: int = 1
+    # 分享帖 / 自荐帖的学习、点赞型回复
+    allow_learn_reply: bool = True
+    max_learn: int = 3
     allow_media: bool = True
     media_codes: tuple[str, ...] = DEFAULT_MEDIA_CODES
     recheck_replied: bool = True
@@ -821,6 +1066,8 @@ class Config:
         cfg.require_evidence = env_bool("UGREEN_REQUIRE_EVIDENCE", True)
         cfg.allow_casual_reply = env_bool("UGREEN_ALLOW_CASUAL_REPLY", True)
         cfg.max_casual = max(0, env_int("UGREEN_MAX_CASUAL", 1))
+        cfg.allow_learn_reply = env_bool("UGREEN_ALLOW_LEARN_REPLY", True)
+        cfg.max_learn = max(0, env_int("UGREEN_MAX_LEARN", 3))
         cfg.allow_media = env_bool("UGREEN_ALLOW_MEDIA", True)
         codes = split_markers(env_str("UGREEN_MEDIA_CODES"), DEFAULT_MEDIA_CODES)
         cfg.media_codes = tuple(c for c in codes if c.startswith("[") and c.endswith("]"))
@@ -1809,6 +2056,7 @@ def ai_payload(threads: list[Thread],
         "revisit": t.revisit,
         "my_previous_reply": t.my_previous_reply[:200],
         "trigger_reason": t.revisit_reason,
+        "is_share": is_share_post(t),
         "media_codes": codes,
     } for t in threads]
 
@@ -2000,6 +2248,8 @@ def describe_ai_config(cfg: Config) -> str:
         f"我的用户名 = {cfg.my_username or '(未配置，仅靠更优解触发)'}",
         f"  水帖/图文  : casual={'允许' if cfg.allow_casual_reply else '禁用'}"
         f"（每次 ≤{cfg.max_casual} 条），"
+        f"learn={'允许' if cfg.allow_learn_reply else '禁用'}"
+        f"（每次 ≤{cfg.max_learn} 条），"
         f"media={'允许' if cfg.allow_media else '禁用'}"
         f"（白名单 {', '.join(cfg.media_codes) or '空'}）",
         "-" * 68,
@@ -2221,16 +2471,16 @@ def parse_ai_response(text: str, valid_tids: set[str]) -> dict[str, dict]:
         if tid not in valid_tids:
             continue
         raw_kind = str(row.get("kind") or "text").strip().lower()
-        kind = raw_kind if raw_kind in ("emoji", "casual") else "text"
+        kind = raw_kind if raw_kind in ("emoji", "casual", "learn") else "text"
         confidence = str(row.get("confidence") or "low").strip().lower()
         if confidence not in ("high", "medium", "low"):
             confidence = "low"
         answer_mode = str(row.get("answer_mode") or "probe").strip().lower()
-        if answer_mode not in ("direct", "probe", "emoji", "casual"):
+        if answer_mode not in ("direct", "probe", "emoji", "casual", "learn"):
             answer_mode = "probe"
-        # 形态与模式对齐：表情 / 水帖不该自称在下技术结论
-        if kind in ("emoji", "casual"):
-            answer_mode = "emoji" if kind == "emoji" else "casual"
+        # 形态与模式对齐：表情 / 水帖 / 学习点赞不该自称在下技术结论
+        if kind in ("emoji", "casual", "learn"):
+            answer_mode = kind if kind != "emoji" else "emoji"
             confidence = "low"
         # 模型可能给自己贴金：没有 high 证据就不允许直接下结论
         if answer_mode == "direct" and confidence != "high":
@@ -2264,6 +2514,9 @@ def local_fallback_reply(t: Thread) -> tuple[bool, str, str]:
     就只回一个表情，用来演示 kind=emoji 链路。
     """
     text = f"{t.title} {t.content[:200]}".lower()
+    # 分享帖 / 自荐帖：回一句学习、点赞（演示 kind=learn 链路）
+    if is_share_post(t):
+        return True, share_learn_reply(t), "learn"
     # 长篇教程/科普帖本身已完整，没有可补充的点，先判成表情回复
     if len(t.content) >= 300 and any(
             k in t.title for k in ("一览", "分享", "实战", "体验", "盘点", "科普")):
@@ -2279,11 +2532,18 @@ def sanitize_reply(text: str, recent: list[str],
                    allow_emoji: bool = True,
                    media: str = "",
                    media_codes: tuple[str, ...] = (),
-                   allow_casual: bool = True) -> tuple[bool, str]:
+                   allow_casual: bool = True,
+                   share_post: bool = False) -> tuple[bool, str]:
     """发出去之前的最后一道闸：内容安全 + 灌水 + 长度 + 重复 + 图文白名单。
 
     kind=emoji / casual 时放宽长度；但辱骂、不当内容、套话、外链、联系方式、
     AI 自述一律仍拦，且不允许连续三次刷同一个表情。
+
+    固定语料（感谢分享 / 赞一个 / 学习了…）的放行条件：
+      * kind="learn" —— 学习/点赞型回复本身就是这些语料；
+      * share_post=True —— 分享帖 / 自荐帖，作者在分享自己的东西，
+        回一句「感谢分享」是正常互动，不是灌水。
+    技术性回复（kind=text 且非分享帖）里仍然拦，避免刷屏。
     """
     s = (text or "").strip().strip('"“”').strip()
     s = re.sub(r"^```.*?$|```", "", s, flags=re.M).strip()
@@ -2293,9 +2553,10 @@ def sanitize_reply(text: str, recent: list[str],
         return False, "含辱骂 / 违背公序良俗的内容"
     if BAD_REPLY_RE.search(s):
         return False, "含外链 / 联系方式 / AI 自述"
-    for cliche in CLICHE_REPLIES:
-        if cliche in s:
-            return False, f"命中灌水套话：{cliche}"
+    if kind != "learn" and not share_post:
+        for cliche in CLICHE_REPLIES:
+            if cliche in s:
+                return False, f"命中灌水套话：{cliche}"
 
     # 图文：只接受配置白名单里的论坛代码，其它一律静默忽略
     extra = ("\n" + media) if (media and media in (media_codes or ())) else ""
@@ -2315,6 +2576,17 @@ def sanitize_reply(text: str, recent: list[str],
             return False, "标记为表情回复，但正文里没有表情"
         if len(recent) >= 3 and all(x.strip() == s for x in recent[-3:]):
             return False, "连续重复同一个表情"
+        return True, s + extra
+
+    # 学习/点赞型：允许套话，但要有实质内容且不能和近期回复雷同
+    if kind == "learn":
+        if len(s) < 1:
+            return False, "学习型回复为空"
+        if len(s) > 60:
+            return False, f"学习型回复过长（{len(s)} 字）"
+        for old in recent:
+            if SequenceMatcher(None, s, old).ratio() > 0.92:
+                return False, "与近期已发回复高度重复"
         return True, s + extra
 
     if not (8 <= len(s) <= 200):
@@ -2341,7 +2613,7 @@ def validate_claim(reply: str, d: dict, t: Thread,
     if not cfg.conservative:
         return True, ""
     kind = d.get("kind", "text")
-    emoji = kind in ("emoji", "casual") or is_emoji_reply(reply)
+    emoji = kind in ("emoji", "casual", "learn") or is_emoji_reply(reply)
     valid_refs = {e.ref for e in t.evidence}
     used = [r for r in d.get("evidence_used", []) if r in valid_refs]
     bogus = [r for r in d.get("evidence_used", []) if r not in valid_refs]
@@ -2592,6 +2864,7 @@ def render_report(results: list[dict], cfg: Config,
          f"重访已回帖 {'开' if cfg.recheck_replied else '关'}"
          f"（≤{cfg.recheck_limit} 篇 / {cfg.revisit_hours:g}h） / "
          f"水帖 {'开' if cfg.allow_casual_reply else '关'}（≤{cfg.max_casual}） / "
+         f"学习点赞 {'开' if cfg.allow_learn_reply else '关'}（≤{cfg.max_learn}） / "
          f"图文 {'开' if cfg.allow_media else '关'}",
          "=" * 68, ""]
     if not results:
@@ -2621,6 +2894,8 @@ def render_report(results: list[dict], cfg: Config,
         tag = ""
         if r.get("casual"):
             tag = " · 水帖"
+        elif r.get("learn"):
+            tag = " · 学习点赞"
         elif r.get("emoji"):
             tag = " · 表情"
         if r.get("media"):
@@ -2908,15 +3183,30 @@ def main() -> int:
 
     sent = 0
     casual_used = 0
+    learn_used = 0
     for t in active:
         d = decisions.get(t.tid)
         if not d:
             results.append({"thread": t, "skip": "模型未返回该帖结果"})
             continue
         if not d.get("should_reply"):
-            results.append({"thread": t, "skip": f"模型判定不值得回复：{d.get('reason', '')}"})
-            continue
+            # 分享帖 / 自荐帖：模型常以「没什么可补充」「楼主已自行说明」为由跳过，
+            # 但按规则这类帖子应该回一句学习/点赞。软理由则补一条，硬理由则尊重跳过。
+            share = is_share_post(t)
+            reason = str(d.get("reason", ""))
+            hard = any(h in reason for h in HARD_SKIP_REASONS)
+            if (share and not hard and cfg.allow_learn_reply
+                    and learn_used < cfg.max_learn and not already_praised(t)):
+                d = {"should_reply": True, "kind": "learn",
+                     "reply": share_learn_reply(t), "reason": "分享帖按规则回一条学习/点赞",
+                     "confidence": "low", "answer_mode": "learn",
+                     "evidence_used": [], "format": "plain", "media": ""}
+            else:
+                results.append({"thread": t, "skip": f"模型判定不值得回复：{reason}",
+                                "share": share})
+                continue
         kind = d.get("kind", "text")
+        share = is_share_post(t)
         if kind == "casual":
             if not cfg.allow_casual_reply:
                 results.append({"thread": t, "skip": "水帖回复已被配置禁用"})
@@ -2924,12 +3214,20 @@ def main() -> int:
             if casual_used >= cfg.max_casual:
                 results.append({"thread": t, "skip": f"水帖回复已达本次上限（{cfg.max_casual} 条）"})
                 continue
+        if kind == "learn":
+            if not cfg.allow_learn_reply:
+                results.append({"thread": t, "skip": "学习/点赞型回复已被配置禁用"})
+                continue
+            if learn_used >= cfg.max_learn:
+                results.append({"thread": t, "skip": f"学习/点赞回复已达本次上限（{cfg.max_learn} 条）"})
+                continue
         # 图文代码只从白名单里取，模型塞其它东西一律忽略
         media = d.get("media", "") if cfg.allow_media else ""
         ok, reply = sanitize_reply(d.get("reply", ""), recent,
                                    kind=kind, allow_emoji=cfg.allow_emoji_reply,
                                    media=media, media_codes=cfg.media_codes,
-                                   allow_casual=cfg.allow_casual_reply)
+                                   allow_casual=cfg.allow_casual_reply,
+                                   share_post=share)
         if not ok:
             results.append({"thread": t, "skip": f"回复未通过质检：{reply}"})
             continue
@@ -2943,6 +3241,7 @@ def main() -> int:
             continue
         is_emoji = kind == "emoji" or is_emoji_reply(reply)
         is_casual = kind == "casual"
+        is_learn = kind == "learn"
         meta = {
             "evidence": t.evidence,
             "confidence": d.get("confidence", ""),
@@ -2950,6 +3249,8 @@ def main() -> int:
             "evidence_used": d.get("evidence_used", []),
             "floors": len(t.replies),
             "casual": is_casual,
+            "learn": is_learn,
+            "share": share,
             "media": media,
             "format": d.get("format", "plain"),
             "revisit": t.revisit,
@@ -2969,6 +3270,8 @@ def main() -> int:
             sent += 1
             if is_casual:
                 casual_used += 1
+            if is_learn:
+                learn_used += 1
             continue
 
         posted, why, body = client.post_reply(t, reply)
@@ -2982,6 +3285,8 @@ def main() -> int:
             sent += 1
             if is_casual:
                 casual_used += 1
+            if is_learn:
+                learn_used += 1
             state.setdefault("replied", {})[t.tid] = {
                 "at": now.strftime("%Y-%m-%d %H:%M:%S"),
                 "forum": t.forum, "title": t.title, "reply": reply,
