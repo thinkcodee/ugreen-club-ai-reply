@@ -1,10 +1,15 @@
-# ugreen-ai-reply
+# ugreen-club-ai-reply
 
 绿联 NAS 社区自动回复脚本的重写版：**默认从论坛导读抓帖**（不区分板块、全站按发布时间倒序，`UGREEN_USE_GUIDE=0` 可改回按板块 RSS），把首楼正文、**已有楼层回复**和**检索到的绿联官方知识库资料**一起交给大模型，先判断值不值得回、有没有可靠依据，再以真实用户的口吻回复；没有可补充的技术点时，也允许只回一个表情。适用于青龙面板定时任务，也可本地直接跑。
 
 v1.1.0 起增加三层保障：**A** 读已有楼层（避免重复回答、跳过已解决帖）、**B** 保守模式（无证据不得下确定性结论或报版本号）、**D** 可插拔检索（默认查 [绿联官方知识库](https://support.ugnas.com/knowledgecenter/)，可叠加本地知识库 / Tavily / Bing / SearXNG / 站内搜索）。
 
 源码按功能拆分在 `src/ugreen/` 包里（见文末「工程结构」）；仓库根目录的 `ugreen_ai_reply.py` 是自动生成的自包含单文件，**青龙用户只用管它一个文件**，用法与拆分前完全一致。
+
+仓库地址：<https://github.com/thinkcodee/ugreen-club-ai-reply>
+
+> 本仓库原名 `ugreen-ai-reply`，已改名为 `ugreen-club-ai-reply`。GitHub 的仓库地址会自动重定向，但**青龙订阅用的 raw 链接不会**——如果你之前订阅过，记得把订阅地址换成新的：
+> `https://raw.githubusercontent.com/thinkcodee/ugreen-club-ai-reply/main/ugreen_ai_reply.py`
 
 原始仓库：[silence9527/ugreen_auto_reply](https://github.com/silence9527/ugreen_auto_reply)
 
@@ -46,7 +51,7 @@ v1.1.0 起增加三层保障：**A** 读已有楼层（避免重复回答、跳�
 ### 本地
 
 ```bash
-cd ugreen-ai-reply
+cd ugreen-club-ai-reply
 pip install -r requirements.txt
 
 # 演练：不需要 Cookie、不需要 API Key，会抓真实帖子并用本地模板演示
@@ -88,6 +93,13 @@ python ugreen_ai_reply.py
 1. 把 `ugreen_ai_reply.py` 放进青龙 `scripts` 目录（订阅管理里填 raw 链接亦可）。
    - 这个文件是**自包含的单文件产物**（由 `ugreen/` 包自动生成），不需要连带 `ugreen/` 目录。
    - 想用整仓库开发，把仓库整个拉下来后跑 `python -m ugreen` 也一样。
+   - **订阅链接**（青龙 → 订阅管理 → 新建，填这个 raw 地址）：
+
+     ```
+     https://raw.githubusercontent.com/thinkcodee/ugreen-club-ai-reply/main/ugreen_ai_reply.py
+     ```
+
+     仓库若再改名，raw 地址也要跟着换（`github.com` 那层会重定向，raw 这层不会）。
 2. 依赖管理 → Python3 添加 `requests`、`beautifulsoup4`（`lxml` 可选，装上解析更快）；脚本缺依赖时也会尝试自动装一次。
 3. 环境变量见下表，建议至少配 `UGREEN_COOKIE`、`AI_API_KEY`、`UGREEN_DRY_RUN`。
 4. 定时任务：`task ugreen_ai_reply.py`，建议 `0 9,20 * * *` 之类低频规则；无论任务跑几次，一天累计也不会超过 `UGREEN_DAILY_QUOTA`（默认 10 条）。
@@ -620,7 +632,7 @@ Discuz 模板不同，成功文案可能变化。设 `UGREEN_DEBUG=1` 看响应�
 ## 八、目录
 
 ```
-ugreen-ai-reply/
+ugreen-club-ai-reply/
 ├── src/ugreen/             # 实现包（分模块，见下方「工程结构」）
 │   ├── __init__.py         # 包入口，导出公共 API
 │   ├── __main__.py         # 支持 python -m ugreen
@@ -688,7 +700,7 @@ core（常量/结构/配置）→ util（通用工具）→ forum / search / ai�
 | --- | --- |
 | 改逻辑 | 改 `src/ugreen/` 下对应模块，然后 `python tools/build_single.py` 重新生成单文件 |
 | 只用不开发 | 直接用 `ugreen_ai_reply.py`，不用管 `src/` 目录 |
-| 本地开发调试 | `pip install -e .` 后 `ugreen-ai-reply --dry-run`，或 `python -m ugreen --dry-run`（需先 `pip install -e .`） |
+| 本地开发调试 | `pip install -e .` 后 `ugreen-club-ai-reply --dry-run`，或 `python -m ugreen --dry-run`（需先 `pip install -e .`） |
 | 确认单文件没过期 | `python tools/build_single.py --check`（测试里也会自动校验，CI 也会跑） |
 
 改动 `src/ugreen/` 后忘了重新构建，测试会直接失败（`test_single_file_is_up_to_date`），不会出现「改了包、跑的还是旧逻辑」这种坑。
@@ -700,9 +712,9 @@ core（常量/结构/配置）→ util（通用工具）→ forum / search / ai�
 | 文件 | 作用 | 谁用 |
 | --- | --- | --- |
 | `requirements.txt` | 装运行时依赖 | `pip install -r requirements.txt`；青龙容器、CI |
-| `pyproject.toml` | 包元数据 + 构建配置 + 依赖声明 | `pip install -e .`；`ugreen-ai-reply` 命令；CI |
+| `pyproject.toml` | 包元数据 + 构建配置 + 依赖声明 | `pip install -e .`；`ugreen-club-ai-reply` 命令；CI |
 
-**只跑脚本的话，有 `requirements.txt` 就够了**，`pyproject.toml` 可以不装——它额外提供的是：可编辑安装、`ugreen-ai-reply` 命令行入口、以及 src 布局的打包声明。
+**只跑脚本的话，有 `requirements.txt` 就够了**，`pyproject.toml` 可以不装——它额外提供的是：可编辑安装、`ugreen-club-ai-reply` 命令行入口、以及 src 布局的打包声明。
 
 两处依赖必须保持一致，由测试守住（`test_requirements_and_pyproject_agree`）——加了依赖只改一处会直接测试失败。
 

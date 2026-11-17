@@ -3,7 +3,7 @@ requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ugreen-ai-reply"
+name = "ugreen-club-ai-reply"
 version = "1.1.6"
 description = "绿联 NAS 社区 AI 自动回复：读帖、判断、检索官方知识库、以真人口吻回复"
 readme = "README.md"
@@ -32,7 +32,7 @@ dependencies = [
 dev = ["flake8>=6.0"]
 
 [project.scripts]
-ugreen-ai-reply = "ugreen.cli:main"
+ugreen-club-ai-reply = "ugreen.runtime.cli:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

@@ -331,6 +331,38 @@ class DependencyDeclarationTest(unittest.TestCase):
         self.assertEqual(data["tool"]["setuptools"]["packages"]["find"]["where"],
                          ["src"])
 
+    def test_entry_points_resolve(self):
+        """entry point 必须指向真实存在的模块。
+
+        历史坑：cli.py 挪进 runtime/ 子包后，pyproject 里的
+        `ugreen.cli:main` 没跟着改，装完命令一跑就
+        ModuleNotFoundError: No module named 'ugreen.cli'。
+        """
+        data = load_toml(ROOT / "pyproject.toml")
+        scripts = data.get("project", {}).get("scripts", {})
+        self.assertTrue(scripts, "pyproject.toml 未声明任何命令行入口")
+        for cmd, target in scripts.items():
+            mod_path, _, func = target.partition(":")
+            rel = Path(*mod_path.split(".")).with_suffix(".py")
+            self.assertTrue((ROOT / "src" / rel).exists(),
+                            f"命令 {cmd} 指向的模块不存在：{mod_path} "
+                            f"(期望 {ROOT / 'src' / rel})")
+            # 目标函数也要真的在这个模块里
+            tree = parse(ROOT / "src" / rel)
+            funcs = {n.name for n in tree.body
+                     if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            self.assertIn(func, funcs,
+                          f"命令 {cmd} 指向的函数 {func} 不在 {mod_path} 里")
+
+    def test_project_name_matches_repo(self):
+        """pyproject 里的包名应与仓库名一致。"""
+        data = load_toml(ROOT / "pyproject.toml")
+        self.assertEqual(data["project"]["name"], "ugreen-club-ai-reply")
+        # 命令行入口名字通常跟包名一致
+        for cmd in data.get("project", {}).get("scripts", {}):
+            self.assertTrue(cmd.startswith("ugreen-club-ai-reply"),
+                            f"命令行入口 {cmd} 与包名不一致")
+
 
 class ModuleResponsibilityTest(unittest.TestCase):
     """各模块职责边界。"""
