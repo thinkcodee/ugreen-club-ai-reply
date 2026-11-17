@@ -22,8 +22,8 @@ except ImportError:  # pragma: no cover - Python 3.9 / 3.10
 def load_toml(path: Path) -> dict:
     """读 pyproject.toml。3.11+ 用标准库 tomllib，低版本用最小正则解析。
 
-    只解析这个测试需要的字段（dependencies 数组 + tool.setuptools 段），
-    不引第三方 tomli 依赖 —— CI 要覆盖 3.9。
+    只解析这个测试需要的字段（dependencies 数组 / tool.setuptools 段 /
+    project.scripts / project.name），不引第三方 tomli 依赖 —— CI 要覆盖 3.9。
     """
     if tomllib is not None:
         return tomllib.loads(path.read_text(encoding="utf-8"))
@@ -44,6 +44,19 @@ def load_toml(path: Path) -> dict:
     if m:
         out["tool"]["setuptools"].setdefault("packages", {})["find"] = {
             "where": re.findall(r'"([^"]+)"', m.group(1))}
+
+    # project.name
+    m = re.search(r'^name\s*=\s*"([^"]+)"', src, re.M)
+    if m:
+        out["project"]["name"] = m.group(1)
+
+    # [project.scripts] 段：命令名 = "模块:函数"
+    m = re.search(r"^\[project\.scripts\]\s*$(.*?)(?=^\[|\Z)", src,
+                  re.S | re.M)
+    if m:
+        out["project"]["scripts"] = {
+            k: v for k, v in re.findall(
+                r'^\s*([A-Za-z0-9_.-]+)\s*=\s*"([^"]+)"', m.group(1), re.M)}
 
     return out
 
