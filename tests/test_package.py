@@ -213,6 +213,46 @@ class SingleFileBuildTest(unittest.TestCase):
                          f"单文件已过期，请运行 python tools/build_single.py\n"
                          f"{r.stdout}{r.stderr}")
 
+    def test_single_file_has_no_excess_blank_lines(self):
+        """单文件里不许出现 3 行以上连续空行。
+
+        历史坑：构建器跳过 import 行时没连带清掉周围的空行，
+        导致模块段落之间堆出 5~7 行空白。此测试锁死该行为，
+        防止将来改构建器时复发。
+        """
+        lines = SINGLE.read_text(encoding="utf-8").splitlines()
+        run = 0
+        bad = []
+        for i, ln in enumerate(lines, 1):
+            if ln.strip() == "":
+                run += 1
+                if run > 2:
+                    bad.append(i)
+            else:
+                run = 0
+        self.assertEqual(bad, [],
+                         f"单文件存在 3+ 连续空行，起始行：{bad[:10]}")
+
+    def test_single_file_module_blocks_are_neat(self):
+        """每个模块段落标记后，注释与首个定义之间固定 2 个空行。"""
+        lines = SINGLE.read_text(encoding="utf-8").splitlines()
+        problems = []
+        for i, ln in enumerate(lines):
+            if not ln.startswith("# ===== "):
+                continue
+            # 跳过段落标记与其后的说明注释
+            j = i + 1
+            while j < len(lines) and lines[j].startswith("#"):
+                j += 1
+            blanks = 0
+            while j < len(lines) and lines[j].strip() == "":
+                blanks += 1
+                j += 1
+            if blanks != 2:
+                problems.append(f"{ln.strip()} 后有 {blanks} 个空行")
+        self.assertEqual(problems, [],
+                         f"模块段落间距不统一：{problems}")
+
     def test_single_file_importable(self):
         mod = importlib.import_module("ugreen_ai_reply")
         self.assertTrue(callable(mod.main))
