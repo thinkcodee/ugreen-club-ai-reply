@@ -596,12 +596,14 @@ class Config:
     ai_auth_header: str = "Authorization"
     ai_auth_scheme: str = "Bearer"   # 置空即直接把 Key 作为头的值（如 api-key）
     ai_temperature: float = 0.6
-    ai_max_tokens: int = 2400
+    ai_max_tokens: int = 4096
     ai_top_p: Optional[float] = None
     ai_timeout: int = 120
     ai_batch: int = 5
     ai_json_mode: bool = True
     ai_retries: int = 3
+    ai_batch_fallback: bool = True
+    ai_disable_thinking: bool = False
     ai_headers: dict = field(default_factory=dict)
     ai_extra_body: dict = field(default_factory=dict)
     ai_system_prompt: str = SYSTEM_PROMPT
@@ -737,13 +739,15 @@ class Config:
         cfg.ai_auth_header = env_str("AI_AUTH_HEADER") or cfg.ai_auth_header
         cfg.ai_auth_scheme = env_str("AI_AUTH_SCHEME", cfg.ai_auth_scheme)
         cfg.ai_temperature = max(0.0, min(2.0, env_float("AI_TEMPERATURE", 0.6)))
-        cfg.ai_max_tokens = max(64, env_int("AI_MAX_TOKENS", 2400))
+        cfg.ai_max_tokens = max(64, env_int("AI_MAX_TOKENS", 4096))
         top_p = env_str("AI_TOP_P")
         cfg.ai_top_p = float(top_p) if top_p else None
         cfg.ai_timeout = max(5, env_int("AI_TIMEOUT", 120))
         cfg.ai_batch = max(1, env_int("AI_BATCH_SIZE", 5))
         cfg.ai_json_mode = env_bool("AI_JSON_MODE", True)
         cfg.ai_retries = max(1, min(6, env_int("AI_RETRIES", 3)))
+        cfg.ai_batch_fallback = env_bool("AI_BATCH_FALLBACK", True)
+        cfg.ai_disable_thinking = env_bool("AI_DISABLE_THINKING", False)
         cfg.ai_headers = parse_kv_mapping(env_str("AI_EXTRA_HEADERS"),
                                           "AI_EXTRA_HEADERS")
         cfg.ai_extra_body = parse_extra_body(env_str("AI_EXTRA_BODY"))
@@ -1797,14 +1801,27 @@ def ai_request_body(batch: list[Thread], cfg: Config) -> dict:
         body["top_p"] = cfg.ai_top_p
     if cfg.ai_json_mode:
         body["response_format"] = {"type": "json_object"}
+    if cfg.ai_disable_thinking and "enable_thinking" not in body:
+        # 思考型模型：先关掉思考，保证 max_tokens 全给正文
+        body["enable_thinking"] = False
     body.update(cfg.ai_extra_body)   # 厂商私有参数，或强制覆盖任一字段
     return body
 
 
 def call_ai(batch: list[Thread], cfg: Config) -> Optional[dict]:
+    """调模型并解析 JSON。
+
+    思考型模型（SiliconFlow 的 Xing 系列、Qwen3 等）常见两种翻车：
+      1) 在 JSON 前面加一段说明文字，或套一层 ```json 围栏；
+      2) token 全花在思考过程上，正文是空的（finish_reason=length）。
+    这里对两种都做兜底：JSON 提取见 extract_json_payload，
+    失败时按情况放宽 max_tokens / 关闭思考模式 / 追加严格格式要求，
+    并把原始返回片段打出来，方便定位。
+    """
     url = cfg.chat_url
     body = ai_request_body(batch, cfg)
     headers = ai_request_headers(cfg)
+    valid = {t.tid for t in batch}
 
     for attempt in range(cfg.ai_retries):
         try:
@@ -1816,18 +1833,52 @@ def call_ai(batch: list[Thread], cfg: Config) -> Optional[dict]:
                 cfg.ai_json_mode = False
                 log("  模型不支持 response_format，已改为普通 JSON 输出重试")
                 continue
+            if (r.status_code == 400 and "enable_thinking" in body
+                    and "enable_thinking" in (r.text or "")):
+                body.pop("enable_thinking", None)  # 该端点不认这个参数，去掉再试
+                log("  模型接口不认 enable_thinking 参数，已去掉并重试")
+                continue
             if r.status_code != 200:
                 log(f"  模型接口 {r.status_code}: {r.text[:200]}")
                 if r.status_code in (401, 403):
                     return None
                 time.sleep(3 * (attempt + 1))
                 continue
-            content = r.json()["choices"][0]["message"]["content"]
-            valid = {t.tid for t in batch}
-            return parse_ai_response(content, valid)
-        except json.JSONDecodeError as exc:
-            log(f"  模型返回不是合法 JSON（第 {attempt + 1} 次）：{exc}")
-            time.sleep(2)
+            try:
+                resp = r.json()
+            except json.JSONDecodeError:
+                log(f"  模型接口返回的不是 JSON（第 {attempt + 1} 次）：{r.text[:200]}")
+                time.sleep(2)
+                continue
+
+            content, meta = extract_ai_content(resp)
+            try:
+                return parse_ai_response(content, valid)
+            except json.JSONDecodeError as exc:
+                log(f"  模型返回不是合法 JSON（第 {attempt + 1} 次）：{exc}")
+                log(f"    finish_reason={meta.get('finish_reason')} "
+                    f"正文长度={meta.get('content_len')} "
+                    f"响应长度={meta.get('raw_len')}")
+                raw = (content or "").strip()
+                if raw:
+                    log(f"    原始返回片段：{raw[:200]}")
+                else:
+                    log("    原始返回为空：模型很可能只输出了思考过程，正文没生成")
+                if meta.get("finish_reason") == "length":
+                    old = int(body.get("max_tokens") or cfg.ai_max_tokens)
+                    body["max_tokens"] = min(int(old * 1.6) + 256, 8192)
+                    # 记住这次放宽，后续批次与逐篇重试都沿用
+                    cfg.ai_max_tokens = body["max_tokens"]
+                    log(f"    输出被 max_tokens 截断，下一轮放宽到 {body['max_tokens']}")
+                if meta.get("reasoning_only") and "enable_thinking" not in body:
+                    body["enable_thinking"] = False
+                    # 记住要关思考，后续批次与逐篇重试都沿用
+                    cfg.ai_disable_thinking = True
+                    log("    下一轮关闭思考模式（enable_thinking=false）")
+                if attempt + 1 < cfg.ai_retries:
+                    body = _strict_nudge(body)
+                time.sleep(2)
+                continue
         except Exception as exc:  # noqa: BLE001
             log(f"  调用模型异常（第 {attempt + 1} 次）：{exc}")
             time.sleep(3 * (attempt + 1))
@@ -1853,6 +1904,9 @@ def describe_ai_config(cfg: Config) -> str:
         f"max_tokens={cfg.ai_max_tokens}, top_p={cfg.ai_top_p}, "
         f"retries={cfg.ai_retries}, batch={cfg.ai_batch}, "
         f"timeout={cfg.ai_timeout}s, json_mode={'on' if cfg.ai_json_mode else 'off'}",
+        f"  健壮性    : 整批失败逐篇重试="
+        f"{'开启' if cfg.ai_batch_fallback else '关闭'}；"
+        f"关闭思考模式={'开启' if cfg.ai_disable_thinking else '关闭'}",
         f"  headers    : {list(cfg.ai_headers) or '无'}",
         f"  extraBody  : {list(cfg.ai_extra_body) or '无'}",
         f"  prompt     : "
@@ -1912,8 +1966,15 @@ def test_ai(cfg: Config) -> int:
         if r.status_code != 200:
             log(f"  失败 HTTP {r.status_code}: {r.text[:300]}")
             return 1
-        content = r.json()["choices"][0]["message"]["content"]
+        resp = r.json()
+        content, meta = extract_ai_content(resp)
         log(f"  成功，模型回复：{str(content)[:120]}")
+        log(f"  finish_reason={meta.get('finish_reason')} "
+            f"正文长度={meta.get('content_len')} "
+            f"响应长度={meta.get('raw_len')}")
+        if not str(content).strip():
+            log("  ⚠ 正文为空：若模型是思考型（如 Xing / Qwen3），"
+                "请设 AI_DISABLE_THINKING=1 或加大 AI_MAX_TOKENS")
         return 0
     except Exception as exc:  # noqa: BLE001
         log(f"  请求异常：{exc}")
@@ -1948,10 +2009,128 @@ def test_search(cfg: Config, keyword: str) -> int:
     return 0 if evs else 1
 
 
+def _first_balanced(text: str, opener: str, closer: str) -> str:
+    """从 text 里找出第一组配平的 opener/closer，跳过字符串里的括号。"""
+    start = text.find(opener)
+    if start < 0:
+        return ""
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == opener:
+            depth += 1
+        elif ch == closer:
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return ""
+
+
+def _strip_fences(text: str) -> str:
+    """去掉 ```json ... ``` 围栏（含围栏夹在正文中间的形态）。"""
+    s = re.sub(r"```[A-Za-z0-9_+-]*[ \t]*\r?\n?", "\n", text or "")
+    return s.replace("```", "").strip()
+
+
+def extract_json_payload(text: str):
+    """从模型输出里尽最大努力抠出可解析的 JSON。
+
+    实测踩坑：带思考能力的模型（SiliconFlow 的 Xing 系列、Qwen3 等）经常在
+    JSON 前面加一段说明、或套一层 ```json 围栏，直接 json.loads 会报
+    "Expecting value: line 1 column 1 (char 0)"。这里依次尝试：
+      1) 原文直接解析
+      2) 去掉围栏后解析
+      3) 扫描第一组配平的 { } 或 [ ] 解析
+      4) 退而求其次找 "results" 数组
+    """
+    s = (text or "").strip().lstrip("\ufeff")
+    if not s:
+        raise json.JSONDecodeError("模型返回空内容", "", 0)
+    for cand in (s, _strip_fences(s)):
+        try:
+            return json.loads(cand)
+        except json.JSONDecodeError:
+            continue
+    for opener, closer in (("{", "}"), ("[", "]")):
+        block = _first_balanced(s, opener, closer)
+        if block:
+            try:
+                return json.loads(block)
+            except json.JSONDecodeError:
+                continue
+    idx = s.find('"results"')
+    if idx >= 0:
+        block = _first_balanced(s[idx:], "[", "]")
+        if block:
+            try:
+                return json.loads(block)
+            except json.JSONDecodeError:
+                pass
+    raise json.JSONDecodeError("无法从模型输出中提取出 JSON", s, 0)
+
+
+def extract_ai_content(resp: dict) -> tuple[str, dict]:
+    """从 OpenAI 兼容响应里取正文，兼容 content 为空 / 为列表 / 思考模型等形态。"""
+    meta: dict = {}
+    choices = resp.get("choices") or []
+    if not choices:
+        return "", {"reason": "响应里没有 choices"}
+    ch = choices[0] or {}
+    msg = ch.get("message") or {}
+    meta["finish_reason"] = ch.get("finish_reason")
+    content = msg.get("content")
+    if isinstance(content, list):        # 部分网关返回分片数组
+        parts = []
+        for p in content:
+            if isinstance(p, dict):
+                parts.append(str(p.get("text") or p.get("content") or ""))
+            else:
+                parts.append(str(p))
+        content = "".join(parts)
+    content = "" if content is None else str(content)
+    reasoning = str(msg.get("reasoning_content") or msg.get("reasoning") or "")
+    if not content.strip() and reasoning.strip():
+        # 模型把 token 全花在思考上，正文是空的——这种情况必须让上层看见
+        meta["reasoning_only"] = True
+        # 只去掉 <think> 标签，保留思考正文（有时思考里已经含 JSON）
+        content = re.sub(r"</?think[^>]*>", " ", reasoning, flags=re.I)
+    if not content.strip():
+        content = str(ch.get("text") or "")
+    meta["content_len"] = len(content)
+    meta["raw_len"] = len(json.dumps(resp, ensure_ascii=False))
+    return content, meta
+
+
+def _strict_nudge(body: dict) -> dict:
+    """重试时在用户消息末尾追加严格的格式要求（不改系统提示词）。"""
+    b = dict(body)
+    msgs = [dict(m) for m in b.get("messages", [])]
+    for m in reversed(msgs):
+        if m.get("role") == "user":
+            m["content"] = (str(m.get("content") or "") + "\n\n"
+                            "【严格格式要求】上一次输出无法被解析为 JSON。"
+                            "这次只输出一个 JSON 对象，形如 {\"results\":[{\"tid\":\"...\","
+                            "\"should_reply\":true,\"kind\":\"text\",\"reply\":\"...\"}]}，"
+                            "不要任何解释文字、不要 Markdown 围栏、不要前后缀。")
+            break
+    b["messages"] = msgs
+    return b
+
+
 def parse_ai_response(text: str, valid_tids: set[str]) -> dict[str, dict]:
-    s = (text or "").strip()
-    s = re.sub(r"^```(?:json)?\s*|\s*```$", "", s, flags=re.M).strip()
-    data = json.loads(s)
+    data = extract_json_payload(text)
     if isinstance(data, dict):
         rows = data.get("results") or data.get("replies") or ([data] if data.get("tid") else [])
     elif isinstance(data, list):
@@ -2625,6 +2804,14 @@ def main() -> int:
             got = call_ai(batch, cfg)
             if got:
                 decisions.update(got)
+            missing = [t for t in batch if t.tid not in decisions]
+            if missing and cfg.ai_batch_fallback:
+                # 整批解析失败时逐篇重试，避免 5 篇帖子被静默丢掉
+                log(f"  批次 {bi} 未覆盖 {len(missing)} 篇，逐篇重试")
+                for t in missing:
+                    one = call_ai([t], cfg)
+                    if one:
+                        decisions.update(one)
             if bi < len(batches):
                 time.sleep(1)
     elif cfg.dry_run and cfg.local_fallback:

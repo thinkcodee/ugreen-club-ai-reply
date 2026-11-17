@@ -167,11 +167,13 @@ https://api.deepseek.com/v1/chat/completions      → 去掉尾部再拼，不�
 | `AI_AUTH_SCHEME` | `Bearer` | **置空**则直接把 Key 作为该头的值（不拼 Bearer） |
 | `AI_TIMEOUT` | `120` | 模型请求超时（秒） |
 | `AI_TEMPERATURE` | `0.6` | 采样温度，限制在 0~2 |
-| `AI_MAX_TOKENS` | `2400` | 单次最大输出 token |
+| `AI_MAX_TOKENS` | `4096` | 单次最大输出 token。思考型模型容易被思考过程吃光，建议不低于 4096 |
 | `AI_TOP_P` | 不传 | 设了才加入请求体 |
 | `AI_BATCH_SIZE` | `5` | 每批送几篇给模型 |
 | `AI_RETRIES` | `3` | 失败/JSON 解析失败重试次数（1~6） |
 | `AI_JSON_MODE` | `1` | 请求 `response_format=json_object`；端点返回 400 不支持时自动去掉并重试 |
+| `AI_BATCH_FALLBACK` | `1` | 整批解析失败时对缺失的帖子逐篇重试，避免一批帖子被静默丢掉 |
+| `AI_DISABLE_THINKING` | `0` | 设 `1` 则请求带 `enable_thinking=false`，适合 Xing / Qwen3 等思考型模型 |
 | `AI_ENABLED` | `1` | `0` 关闭 AI；实发模式下会拒绝发帖（防止用模板灌水） |
 | `AI_EXTRA_BODY` | `{}` | JSON 对象，追加厂商私有参数或覆盖任一请求字段 |
 | `AI_EXTRA_HEADERS` | `{}` | JSON 对象或 `K: V; K2: V2`，用于 OpenRouter 等需要额外头的平台 |
@@ -430,7 +432,14 @@ Discuz 模板不同，成功文案可能变化。设 `UGREEN_DEBUG=1` 看响应�
 先跑 `python ugreen_ai_reply.py --show-config`，它会打印最终 endpoint、model、baseURL 和 Key 来自哪个环境变量（Key 脱敏）；再跑 `--test-ai` 单独发一条最小请求。常见原因：baseURL 漏 `/v1`（脚本会自动补）、把完整 `/chat/completions` 又拼了一次（脚本会去重）、`AI_ENABLED=0`、或某个优先级更高的别名变量（如 `API_KEY`）覆盖了真正想用的 Key。带 deployment/query 的端点请直接设 `AI_ENDPOINT`。
 
 **Q：AI 一直返回不合法 JSON？**
-换一个对 `response_format` 支持更好的模型，或设 `AI_JSON_MODE=0`；脚本会自动去掉 Markdown 围栏并按 `AI_RETRIES` 重试。
+思考型模型（SiliconFlow 的 `XingChenAGI/Xing4.0-*`、Qwen3 等）常见两种翻车，v1.1.1 起都能自动兜住：
+
+1. **JSON 前面带了一段说明文字**，或套了 ` ```json ` 围栏 → 现在会先剥围栏、再扫描第一组配平的 `{ }` / `[ ]` 抠出 JSON；
+2. **token 全花在思考过程上，正文是空的**（`finish_reason=length`）→ 检测到这种情况会自动放宽 `max_tokens`、并在下一轮带上 `enable_thinking=false`。
+
+失败时日志会打印 `finish_reason`、正文长度和**原始返回片段**，照着看就能定位。若你的模型支持关思考，建议直接设 `AI_DISABLE_THINKING=1`；端点不认这个参数时脚本会自动去掉并继续。整批失败后还会对缺失的帖子逐篇重试（`AI_BATCH_FALLBACK=1`），不会再整批丢掉。
+
+老版本如果连 `response_format` 都不支持，设 `AI_JSON_MODE=0`。
 
 **Q：表情回复被论坛拒了？**
 部分 Discuz 配置会限制过短内容，响应里出现"内容太短"时脚本会如实记为失败（这比原脚本误报成功要好）。可让模型给"表情 + 一句话"而非纯表情，或设 `UGREEN_ALLOW_EMOJI_REPLY=0` 只用文字回复。

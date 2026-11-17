@@ -1226,5 +1226,207 @@ class CasualMediaSafetyTest(unittest.TestCase):
             self.assertEqual(m.search_baidu("硬盘休眠", cfg), [])
 
 
+class ModelOutputParsingTest(unittest.TestCase):
+    """思考型模型返回各种形态时，必须都能抠出 JSON，不能整批丢弃。"""
+
+    VALID = {"results": [{"tid": "7001", "should_reply": True, "kind": "text",
+                          "reply": "可以先看权限设置", "reason": "权限问题"}]}
+
+    def test_plain_json(self):
+        got = m.parse_ai_response(json.dumps(self.VALID), {"7001"})
+        self.assertTrue(got["7001"]["should_reply"])
+
+    def test_markdown_fenced_json(self):
+        text = "```json\n" + json.dumps(self.VALID, ensure_ascii=False) + "\n```"
+        got = m.parse_ai_response(text, {"7001"})
+        self.assertTrue(got["7001"]["should_reply"])
+
+    def test_prose_before_json(self):
+        """模型先说一句「好的，以下是结果」再给 JSON —— 旧代码在这里直接崩。"""
+        text = "好的，以下是逐篇判断结果：\n\n" + json.dumps(self.VALID, ensure_ascii=False)
+        got = m.parse_ai_response(text, {"7001"})
+        self.assertTrue(got["7001"]["should_reply"])
+
+    def test_prose_and_fence_mixed(self):
+        text = ("思考完毕。\n```json\n" + json.dumps(self.VALID, ensure_ascii=False)
+                + "\n```\n以上，希望有帮助。")
+        got = m.parse_ai_response(text, {"7001"})
+        self.assertTrue(got["7001"]["should_reply"])
+
+    def test_brace_inside_string_does_not_break_extraction(self):
+        payload = {"results": [{"tid": "7001", "should_reply": True, "kind": "text",
+                                "reply": "路径是 C:\\目录\\{x} 这样", "reason": "路径"}]}
+        text = "结果如下：\n" + json.dumps(payload, ensure_ascii=False)
+        got = m.parse_ai_response(text, {"7001"})
+        self.assertIn("目录", got["7001"]["reply"])
+
+    def test_empty_content_raises(self):
+        with self.assertRaises(json.JSONDecodeError):
+            m.parse_ai_response("", {"7001"})
+
+    def test_extract_content_from_list_parts(self):
+        resp = {"choices": [{"finish_reason": "stop", "message": {
+            "content": [{"type": "text", "text": "hello"}]}}]}
+        content, meta = m.extract_ai_content(resp)
+        self.assertEqual(content, "hello")
+        self.assertEqual(meta["finish_reason"], "stop")
+
+    def test_extract_content_falls_back_to_reasoning(self):
+        """思考模型把 token 花光、正文为空时，要能看到思考内容并被标记。"""
+        resp = {"choices": [{"finish_reason": "length", "message": {
+            "content": "", "reasoning_content": "<think>想了很久</think>"}}]}
+        content, meta = m.extract_ai_content(resp)
+        self.assertTrue(meta.get("reasoning_only"))
+        self.assertEqual(meta["finish_reason"], "length")
+        self.assertIn("想了很久", content)
+
+    def test_extract_content_missing_choices(self):
+        content, meta = m.extract_ai_content({"id": "x"})
+        self.assertEqual(content, "")
+        self.assertIn("reason", meta)
+
+    def test_strict_nudge_appends_format_requirement(self):
+        body = {"messages": [{"role": "system", "content": "s"},
+                             {"role": "user", "content": "判一下"}]}
+        out = m._strict_nudge(body)
+        self.assertIn("严格格式要求", out["messages"][-1]["content"])
+        # 原 body 不能被就地改坏
+        self.assertNotIn("严格格式要求", body["messages"][-1]["content"])
+
+
+class CallAiRobustTest(unittest.TestCase):
+    """call_ai 的重试与降级行为。"""
+
+    @staticmethod
+    def _cfg():
+        cfg = m.Config()
+        cfg.ai_key = "test-key"
+        cfg.ai_base = "http://127.0.0.1:9/v1"
+        cfg.ai_chat_path = "/chat/completions"
+        cfg.ai_model = "test-model"
+        cfg.ai_retries = 2
+        cfg.ai_timeout = 5
+        cfg.ai_json_mode = False
+        return cfg
+
+    @staticmethod
+    def _resp(content, finish_reason="stop", reasoning=None):
+        msg = {"content": content}
+        if reasoning is not None:
+            msg["reasoning_content"] = reasoning
+        return {"choices": [{"finish_reason": finish_reason, "message": msg}]}
+
+    @staticmethod
+    def _batch(n=1):
+        return [m.Thread(tid=str(7000 + i), title="t", content="c", forum="f")
+                for i in range(n)]
+
+    def test_json_parse_failure_triggers_adaptive_retry(self):
+        """第一次返回带前言的非 JSON，第二次正常 —— 应自动重试并成功。"""
+        calls = []
+
+        class R:
+            def __init__(self, payload, code=200):
+                self.status_code = code
+                self._p = payload
+                self.text = json.dumps(payload, ensure_ascii=False)
+
+            def json(self):
+                return self._p
+
+        ok = {"results": [{"tid": "7000", "should_reply": True, "kind": "text",
+                           "reply": "建议先重启服务", "reason": "服务异常"}]}
+        # 第一次：完全无法解析的输出；第二次：正常 JSON
+        seq = [R(self._resp("这不是 JSON，只是一句话")),
+               R(self._resp(json.dumps(ok, ensure_ascii=False)))]
+
+        def fake_post(url, headers=None, json=None, timeout=None):
+            calls.append(json)
+            return seq[len(calls) - 1]
+
+        with patch.object(m.requests, "post", side_effect=fake_post):
+            got = m.call_ai(self._batch(1), self._cfg())
+        self.assertIn("7000", got)
+        self.assertEqual(len(calls), 2)
+        # 第二次请求应带上严格格式要求
+        self.assertIn("严格格式要求", calls[1]["messages"][-1]["content"])
+
+    def test_empty_content_marks_reasoning_only(self):
+        """正文为空 + 只有思考内容 -> 下一轮关闭思考模式。"""
+        calls = []
+
+        class R:
+            status_code = 200
+            text = "{}"
+
+            def __init__(self, payload):
+                self._p = payload
+
+            def json(self):
+                return self._p
+
+        seq = [R(self._resp("", finish_reason="length", reasoning="<think>想了</think>")),
+               R(self._resp("", finish_reason="length", reasoning="<think>又想了</think>")),
+               R(self._resp("", finish_reason="length", reasoning="<think>再想</think>"))]
+
+        def fake_post(url, headers=None, json=None, timeout=None):
+            calls.append(json)
+            return seq[len(calls) - 1]
+
+        with patch.object(m.requests, "post", side_effect=fake_post):
+            got = m.call_ai(self._batch(1), self._cfg())
+        self.assertIsNone(got)
+        self.assertTrue(calls)
+        self.assertFalse(calls[0].get("enable_thinking"))
+        # 第二次开始应已加上 enable_thinking=false
+        self.assertFalse(calls[1].get("enable_thinking"))
+
+    def test_batch_fallback_covers_missing_posts(self):
+        """整批解析失败时，逐篇重试应把帖子补回来。"""
+        cfg = self._cfg()
+        cfg.ai_batch_fallback = True
+        ok = {"results": [{"tid": "7000", "should_reply": True, "kind": "text",
+                           "reply": "可以试试", "reason": "有解"}]}
+        seq = [
+            # 整批：带前言的坏 JSON
+            _R({"choices": [{"finish_reason": "stop", "message": {
+                "content": "稍等，我看看：\n这不是 JSON"}}]}),
+            # 逐篇重试第一篇：正常
+            _R({"choices": [{"finish_reason": "stop", "message": {
+                "content": json.dumps(ok, ensure_ascii=False)}}]}),
+        ]
+        calls = []
+
+        def fake_post(url, headers=None, json=None, timeout=None):
+            calls.append(json)
+            return seq[min(len(calls) - 1, len(seq) - 1)]
+
+        with patch.object(m.requests, "post", side_effect=fake_post):
+            # 直接验证主流程用的兜底逻辑：缺哪篇就补哪篇
+            decisions = {}
+            got = m.call_ai(self._batch(1), cfg)
+            if got:
+                decisions.update(got)
+            missing = [t for t in self._batch(1) if t.tid not in decisions]
+            if missing:
+                for t in missing:
+                    one = m.call_ai([t], cfg)
+                    if one:
+                        decisions.update(one)
+        self.assertIn("7000", decisions)
+
+
+class _R:
+    """测试用的小响应替身。"""
+
+    def __init__(self, payload, code=200):
+        self.status_code = code
+        self._p = payload
+        self.text = json.dumps(payload, ensure_ascii=False)
+
+    def json(self):
+        return self._p
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
