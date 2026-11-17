@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+config.local.env
+ugreen_state.json
+ugreen_log.txt
+*.log
+.pytest_cache/
