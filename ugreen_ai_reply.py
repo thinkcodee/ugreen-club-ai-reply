@@ -16,7 +16,7 @@
   6. A：把帖子里已有的楼层回复一起喂给模型，避免重复回答 / 识别已解决帖。
   7. B：保守模式——没有证据不得下确定性结论、不得编造版本号与参数；
      不确定时只追问一个关键信息或给排查方向。
-  8. D：可插拔检索层，默认查询绿联官方知识库（support.ugnas.com 同源公开只读接口），
+  8. C：可插拔检索层，默认查询绿联官方知识库（support.ugnas.com 同源公开只读接口），
      也可叠加 Tavily / Bing / 百度 / SearXNG / 站内搜索 / 自定义端点，
      把检索到的片段作为证据注入 prompt，并要求回复标注引用了哪些证据。
 
@@ -855,7 +855,7 @@ class Thread:
     can_reply: bool = False
     detail_ok: bool = False
     skip_reason: str = ""
-    # A / D 的新增字段
+    # A / C 的新增字段
     replies: list[Reply] = field(default_factory=list)
     likely_solved: bool = False
     evidence: list[Evidence] = field(default_factory=list)
@@ -2543,7 +2543,7 @@ def describe_ai_config(cfg: Config) -> str:
         f"  板块      : {', '.join(DEFAULT_FORUMS.get(f, str(f)) for f in cfg.fids)}"
         f"（每板块各取最新 {cfg.per_forum_limit} 篇，仅板块模式生效）",
         "-" * 68,
-        "检索（D）",
+        "检索（C）",
         f"  状态      : {'开启' if cfg.search_ready else '关闭'}；"
         f"源 = {', '.join(cfg.search_providers) or '无'}",
         f"  配额      : 最多检索 {cfg.search_max_queries} 篇 / 每篇 "
@@ -3395,7 +3395,7 @@ def main() -> int:
         + (f"（已抓到楼层共 {sum(len(t.replies) for t in active)} 条）"
            if cfg.fetch_replies else ""))
 
-    # D：在调模型之前把资料检索好，注入每篇帖子的 evidence 字段
+    # C：在调模型之前把资料检索好，注入每篇帖子的 evidence 字段
     retriever: Optional[Retriever] = None
     if cfg.search_ready and cfg.search_max_queries > 0 and active:
         retriever = Retriever(cfg, client)

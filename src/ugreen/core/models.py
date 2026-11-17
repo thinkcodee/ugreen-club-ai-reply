@@ -184,7 +184,7 @@ class Thread:
     can_reply: bool = False
     detail_ok: bool = False
     skip_reason: str = ""
-    # A / D 的新增字段
+    # A / C 的新增字段
     replies: list[Reply] = field(default_factory=list)
     likely_solved: bool = False
     evidence: list[Evidence] = field(default_factory=list)

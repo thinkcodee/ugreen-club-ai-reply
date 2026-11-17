@@ -343,7 +343,7 @@ def main() -> int:
         + (f"（已抓到楼层共 {sum(len(t.replies) for t in active)} 条）"
            if cfg.fetch_replies else ""))
 
-    # D：在调模型之前把资料检索好，注入每篇帖子的 evidence 字段
+    # C：在调模型之前把资料检索好，注入每篇帖子的 evidence 字段
     retriever: Optional[Retriever] = None
     if cfg.search_ready and cfg.search_max_queries > 0 and active:
         retriever = Retriever(cfg, client)

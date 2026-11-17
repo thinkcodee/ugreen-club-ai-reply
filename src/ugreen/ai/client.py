@@ -275,7 +275,7 @@ def describe_ai_config(cfg: Config) -> str:
         f"  板块      : {', '.join(DEFAULT_FORUMS.get(f, str(f)) for f in cfg.fids)}"
         f"（每板块各取最新 {cfg.per_forum_limit} 篇，仅板块模式生效）",
         "-" * 68,
-        "检索（D）",
+        "检索（C）",
         f"  状态      : {'开启' if cfg.search_ready else '关闭'}；"
         f"源 = {', '.join(cfg.search_providers) or '无'}",
         f"  配额      : 最多检索 {cfg.search_max_queries} 篇 / 每篇 "

@@ -804,7 +804,7 @@ class ReplyFloorTest(unittest.TestCase):
 
 
 # ===========================================================================
-# D：检索层
+# C：检索层
 # ===========================================================================
 
 class SearchUtilsTest(unittest.TestCase):
@@ -1145,7 +1145,7 @@ class AbcConfigTest(unittest.TestCase):
                 redirect_stdout(buf):
             self.assertEqual(m.main(), 0)
         out = buf.getvalue()
-        for kw in ("上下文（A）", "保守模式", "检索（D）", "绿联知识库", "ugnas-kb"):
+        for kw in ("上下文（A）", "保守模式", "检索（C）", "绿联知识库", "ugnas-kb"):
             self.assertIn(kw, out)
 
     def test_test_search_is_offline(self):
