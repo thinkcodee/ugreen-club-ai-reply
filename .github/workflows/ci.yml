@@ -13,11 +13,19 @@ permissions:
 jobs:
   test:
     name: 测试 (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.11", "3.13"]
+        include:
+          # Python 3.9 已 EOL，ubuntu-24.04 runner 不再预装，
+          # setup-python 会找不到，需要固定到 22.04
+          - python-version: "3.9"
+            runner: ubuntu-22.04
+          - python-version: "3.11"
+            runner: ubuntu-latest
+          - python-version: "3.13"
+            runner: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
