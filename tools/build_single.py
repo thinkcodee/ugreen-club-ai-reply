@@ -52,13 +52,13 @@ HEADER = '''#!/usr/bin/env python3
 本文件由 tools/build_single.py 自动生成 —— 请勿直接修改，
 要改逻辑请改 ugreen/ 包内对应模块，然后重新运行该脚本。
 
-相对于原 ugreen_auto_reply 的修复要点：
-  1. 不再用 a[href*="thread-"] 抓帖子（它只会命中页脚的 29/30/104 三个制度帖）。
-     默认抓论坛导读（forum.php?mod=guide&view=newthread，不区分板块、按发布时间倒序），
-     也可退回按板块 RSS 抓取；列表页仅作兜底且限定在 #threadlisttableid 容器内。
-  2. 不再随机灌固定语料，改由 OpenAI 兼容的大模型读标题 + 正文后生成/决定是否回复。
-  3. 不再以 HTTP 200 判定成功，改为解析 Discuz 响应里的成功/失败标记。
-  4. 修复企业微信推送：正确区分 sendNotify / QYWX_KEY / QYWX_AM 三种渠道。
+主要能力：
+  1. 抓帖走论坛导读（forum.php?mod=guide&view=newthread，不区分板块、按发布时间倒序），
+     也可退回按板块 RSS 抓取；列表页仅作兜底且限定在 #threadlisttableid 容器内，
+     避免把页脚的制度帖误当真实发帖。
+  2. 由 OpenAI 兼容的大模型读标题 + 正文后生成/决定是否回复，而非随机灌固定语料。
+  3. 以解析 Discuz 响应里的成功/失败标记判定发送结果，不只看 HTTP 200。
+  4. 企业微信推送正确区分 sendNotify / QYWX_KEY / QYWX_AM 三种渠道。
   5. 状态持久化去重、黑名单、限流、dry-run 默认开启。
   6. A：把帖子里已有的楼层回复一起喂给模型，避免重复回答 / 识别已解决帖。
   7. B：保守模式——没有证据不得下确定性结论、不得编造版本号与参数；
