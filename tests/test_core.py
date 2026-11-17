@@ -825,8 +825,9 @@ class SearchUtilsTest(unittest.TestCase):
         self.assertNotIn("【", qs[1])
 
     def test_parse_providers_filters_unknown(self):
+        # local 是已移除的本地知识库源，现在跟 bogus 一样被过滤
         self.assertEqual(m.parse_search_providers("ugnas-kb, local, bogus, tavily"),
-                         ("ugnas-kb", "local", "tavily"))
+                         ("ugnas-kb", "tavily"))
         self.assertEqual(m.parse_search_providers("none"), ())
         self.assertEqual(m.parse_search_providers("a,a,b"), ())
 
@@ -978,18 +979,24 @@ class RetrieverTest(unittest.TestCase):
         self.assertEqual({e.ref for e in got}, {"kb:1"})
         self.assertIn("低相关丢弃", t.search_note)
 
-    def test_local_knowledge_base(self):
-        import tempfile
-        with tempfile.TemporaryDirectory() as d:
-            p = Path(d) / "ops.md"
-            p.write_text("# 硬盘休眠排查\n先关闭 Docker 虚拟机，再检查后台任务。\n\n"
-                         "# 无关章节\n随便写点别的。\n", encoding="utf-8")
-            cfg = self._cfg()
-            cfg.local_kb_dir = Path(d)
-            evs = m.search_local_kb("硬盘休眠", cfg)
-        self.assertTrue(evs)
-        self.assertIn("Docker", evs[0].snippet)
-        self.assertEqual(evs[0].source, "本地知识库/ops.md")
+    def test_local_provider_removed(self):
+        """本地知识库检索源已移除 —— 配置里写了 local 会被拒绝。"""
+        self.assertNotIn("local", m.KNOWN_SEARCH_PROVIDERS)
+        self.assertFalse(hasattr(m, "search_local_kb"))
+        # 解析时 local 被忽略，只剩合法的源
+        got = m.parse_search_providers("ugnas-kb,local,tavily")
+        self.assertEqual(got, ("ugnas-kb", "tavily"))
+        self.assertNotIn("local", got)
+
+    def test_known_providers_all_have_search_functions(self):
+        """每个合法源都要有对应的检索函数，否则运行时会 KeyError。"""
+        for provider, fname in m.SEARCH_FUNCS.items():
+            self.assertTrue(hasattr(m, fname),
+                            f"检索源 {provider} 对应的函数 {fname} 不存在")
+        # 白名单与函数表必须一一对应，不能多也不能少
+        self.assertEqual(set(m.KNOWN_SEARCH_PROVIDERS),
+                         set(m.SEARCH_FUNCS.keys()),
+                         "KNOWN_SEARCH_PROVIDERS 与 SEARCH_FUNCS 不一致")
 
 
 # ===========================================================================
@@ -1107,8 +1114,9 @@ class AbcConfigTest(unittest.TestCase):
         self.assertEqual(cfg.search_language, "zh-CN")
 
     def test_provider_list_and_unknown_filtered(self):
+        # local 已移除，配置里写它会被当作未知源过滤掉
         cfg = self._cfg({"UGREEN_SEARCH_PROVIDERS": "ugnas-kb,local,tavily,bogus"})
-        self.assertEqual(cfg.search_providers, ("ugnas-kb", "local", "tavily"))
+        self.assertEqual(cfg.search_providers, ("ugnas-kb", "tavily"))
 
     def test_disable_switches(self):
         self.assertFalse(self._cfg({"UGREEN_SEARCH": "0"}).search_ready)

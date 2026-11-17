@@ -2,7 +2,7 @@
 
 绿联 NAS 社区自动回复脚本的重写版：**默认从论坛导读抓帖**（不区分板块、全站按发布时间倒序，`UGREEN_USE_GUIDE=0` 可改回按板块 RSS），把首楼正文、**已有楼层回复**和**检索到的绿联官方知识库资料**一起交给大模型，先判断值不值得回、有没有可靠依据，再以真实用户的口吻回复；没有可补充的技术点时，也允许只回一个表情。适用于青龙面板定时任务，也可本地直接跑。
 
-v1.1.0 起增加三层保障：**A** 读已有楼层（避免重复回答、跳过已解决帖）、**B** 保守模式（无证据不得下确定性结论或报版本号）、**D** 可插拔检索（默认查 [绿联官方知识库](https://support.ugnas.com/knowledgecenter/)，可叠加本地知识库 / Tavily / Bing / SearXNG / 站内搜索）。
+v1.1.0 起增加三层保障：**A** 读已有楼层（避免重复回答、跳过已解决帖）、**B** 保守模式（无证据不得下确定性结论或报版本号）、**D** 可插拔检索（默认查 [绿联官方知识库](https://support.ugnas.com/knowledgecenter/)，可叠加 Tavily / Bing / 百度 / SearXNG / 站内搜索 / 自定义端点）。
 
 源码按功能拆分在 `src/ugreen/` 包里（见文末「工程结构」）；仓库根目录的 `ugreen_ai_reply.py` 是自动生成的自包含单文件，**青龙用户只用管它一个文件**，用法与拆分前完全一致。
 
@@ -288,7 +288,7 @@ python ugreen_ai_reply.py --test-ai
 
 ### 检索（D）
 
-默认 **`UGREEN_SEARCH_PROVIDERS=ugnas-kb,tavily,baidu`**：绿联官方知识库零配置可用，另外两个联网源**没配 Key 时直接返回空、不会发出任何请求**；知识库查到足够证据就不联网，证据不足（少于 `UGREEN_WEB_FALLBACK_THRESHOLD` 条）才自动联网补查。可用源：`ugnas-kb`、`local`、`site`、`tavily`、`bing`、`baidu`、`searxng`、`custom`，逗号分隔；填 `none` 或设 `UGREEN_SEARCH=0` / `--no-search` 关闭。
+默认 **`UGREEN_SEARCH_PROVIDERS=ugnas-kb,tavily,baidu`**：绿联官方知识库零配置可用，另外两个联网源**没配 Key 时直接返回空、不会发出任何请求**；知识库查到足够证据就不联网，证据不足（少于 `UGREEN_WEB_FALLBACK_THRESHOLD` 条）才自动联网补查。可用源（全部联网）：`ugnas-kb`（绿联官方知识库）、`site`（站内搜索）、`tavily`、`bing`、`baidu`、`searxng`、`custom`（自定义 HTTP 端点），逗号分隔；填 `none` 或设 `UGREEN_SEARCH=0` / `--no-search` 关闭。
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -305,7 +305,6 @@ python ugreen_ai_reply.py --test-ai
 | `UGREEN_KB_DETAIL` | `1` | 对排在前面的文章再取一次完整正文（比搜索摘要更实） |
 | `UGREEN_KB_DETAIL_LIMIT` | `1` | 每次检索取几篇全文 |
 | `UGREEN_WEB_FALLBACK_THRESHOLD` | `1` | 一手资料少于几条时触发联网补查 |
-| `UGREEN_LOCAL_KB_DIR` | `./knowledge` | 本地知识库目录，放 `.md` / `.txt`，按 Markdown 标题分块做词频检索 |
 | `TAVILY_API_KEY` | 空 | 启用 Tavily 联网检索 |
 | `BING_SEARCH_KEY` / `BING_API_KEY` | 空 | 启用 Bing Web Search v7 |
 | `BAIDU_SEARCH_KEY` | 空 | 启用百度检索（也可用 `QIANFAN_API_KEY` / `APPBUILDER_TOKEN` / `BAIDU_API_KEY`） |
@@ -519,7 +518,7 @@ UGREEN_USE_GUIDE=0
 
 **重访 · 已回复过的帖**：默认**不再回复**。只有命中触发条件才会重新送进模型：① 有人点名你（需配 `UGREEN_MY_USERNAME`）；② 新楼层出现更优解法。新回复若与上次内容相似度超过 0.85 会被本地硬闸拦掉。回溯窗口与条数由 `UGREEN_REVISIT_HOURS` / `UGREEN_RECHECK_LIMIT` 控制。
 
-**D · 检索**：默认查绿联官方知识库 `https://support.ugnas.com/knowledgecenter/` 网页端同源的公开只读接口（`api.ugnas.com/.../base/search`），返回标题、摘要、正文片段，必要时再取一次文章全文。证据带 `ref`（如 `kb:876`）、`source` 和 `relevance`。单次运行最多给 8 篇帖子检索，每篇最多 4 条、总字数 1800 字，并有请求间隔和失败降级。想离线复现或补充自有资料，把 Markdown 放进 `knowledge/` 并加 `local` 源即可；`--test-search "硬盘休眠"` 可以只跑检索看结果。
+**D · 检索**：默认查绿联官方知识库 `https://support.ugnas.com/knowledgecenter/` 网页端同源的公开只读接口（`api.ugnas.com/.../base/search`），返回标题、摘要、正文片段，必要时再取一次文章全文。证据带 `ref`（如 `kb:876`）、`source` 和 `relevance`。单次运行最多给 8 篇帖子检索，每篇最多 4 条、总字数 1800 字，并有请求间隔和失败降级。知识库证据不足时可自动用已配的联网源（Tavily / 百度 / Bing / SearXNG / 自定义端点）补查；`--test-search "硬盘休眠"` 可以只跑检索看结果。
 
 知识库查到的证据少于 `UGREEN_WEB_FALLBACK_THRESHOLD` 条时，会自动调用已配置的联网源补查（默认列表 `ugnas-kb,tavily,baidu`；Tavily / 百度**没配 Key 时直接返回空、不发任何请求**）。百度默认走千帆 AI 搜索端点，端点、鉴权头、结果路径都能改。
 
@@ -592,7 +591,7 @@ Discuz 模板不同，成功文案可能变化。设 `UGREEN_DEBUG=1` 看响应�
 先跑 `python ugreen_ai_reply.py --test-search "关键词"` 确认知识库接口本身通不通。检索失败会自动降级为空，此时保守模式下模型只能追问或给排查方向，很多帖子会被判 `should_reply=false` —— 这是**故意的安全行为**，不是故障。若确实不需要约束，可设 `UGREEN_CONSERVATIVE=0`，但会显著提高答错风险。
 
 **Q：怎么加自己的资料？**
-在脚本目录下建 `knowledge/`，放 `.md` / `.txt`（按 `#` 标题分块），再设 `UGREEN_SEARCH_PROVIDERS=ugnas-kb,local`。也可以接 Tavily / Bing / 百度 / SearXNG / 自定义 HTTP 端点，详见第四节。
+接 Tavily / Bing / 百度 / SearXNG / 自定义 HTTP 端点即可，详见第四节。绿联官方知识库已经默认启用且无需配置。
 
 **Q：我回过的帖子还会再回吗？**
 默认**不会**。已回复的 tid 记在 `ugreen_state.json` 里，之后直接过滤掉。只有两种例外会重访：① 有人 @ 你或提到你（需设 `UGREEN_MY_USERNAME=你的社区用户名`）；② 新楼层里出现明显更优的解法。日志里会打印「重访命中 tid=xxxx：xxx 点名了你」或「提到了更优解法」，报告里也会带一行 `[重访]`。完全关掉重访设 `UGREEN_RECHECK_REPLIED=0`。
@@ -661,7 +660,6 @@ ugreen-club-ai-reply/
 ├── config.example.env      # 环境变量样例
 ├── tests/test_core.py      # 179 项行为单测
 ├── tests/test_package.py   # 29 项工程结构测试
-├── knowledge/              # 可选：本地知识库 .md/.txt（需加 local 检索源）
 ├── LICENSE                 # MIT 许可证
 └── README.md
 ```

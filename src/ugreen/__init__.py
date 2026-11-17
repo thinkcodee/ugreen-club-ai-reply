@@ -33,6 +33,7 @@ from .ai.quality import (  # noqa: F401
 from .core.config import Config  # noqa: F401
 from .core.constants import *  # noqa: F401,F403
 from .core.models import (  # noqa: F401
+    KNOWN_SEARCH_PROVIDERS,
     Evidence,
     Reply,
     Thread,
@@ -40,6 +41,7 @@ from .core.models import (  # noqa: F401
     dig_json,
     evidence_relevance,
     extract_keywords,
+    parse_search_providers,
     stable_ref,
     title_bigrams,
 )
@@ -88,12 +90,12 @@ from .util.aiutil import (  # noqa: F401
     parse_kv_mapping,
 )
 from .search.providers import (  # noqa: F401
+    SEARCH_FUNCS,
     Retriever,
     describe_evidence,
     search_baidu,
     search_bing,
     search_custom,
-    search_local_kb,
     search_searxng,
     search_site,
     search_tavily,
@@ -115,6 +117,9 @@ __all__ = [
     "Evidence",
     "UgnasClient",
     "Retriever",
+    "KNOWN_SEARCH_PROVIDERS",
+    "SEARCH_FUNCS",
+    "parse_search_providers",
     "log",
     "clean_text",
     "clip_text",
@@ -143,7 +148,6 @@ __all__ = [
     "parse_reply_floors",
     "describe_evidence",
     "search_ugnas_kb",
-    "search_local_kb",
     "search_tavily",
     "search_bing",
     "search_searxng",

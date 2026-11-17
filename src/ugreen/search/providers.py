@@ -129,41 +129,6 @@ def search_ugnas_kb(query: str, cfg: Config, client=None,
     return out
 
 
-def search_local_kb(query: str, cfg: Config, client=None,
-                    fetch_detail: bool = True) -> list[Evidence]:
-    """本地知识库：读 knowledge/*.md|txt，按 Markdown 标题分块做词频打分。"""
-    d = cfg.local_kb_dir
-    if not d.is_dir():
-        return []
-    terms = [x.lower() for x in re.split(r"[\s,，]+", query) if len(x) > 1]
-    if not terms:
-        return []
-    out: list[Evidence] = []
-    try:
-        files = sorted(list(d.glob("*.md")) + list(d.glob("*.txt")))
-    except OSError:
-        return []
-    for p in files:
-        try:
-            text = p.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        chunks = re.split(r"(?m)^#{1,4}\s+", text)
-        for i, ch in enumerate(chunks):
-            low = ch.lower()
-            score = sum(low.count(term) for term in terms)
-            if not score:
-                continue
-            lines = [x.strip() for x in ch.splitlines() if x.strip()]
-            title = lines[0][:60] if lines else p.stem
-            body = " ".join(lines[1:]) if len(lines) > 1 else " ".join(lines)
-            out.append(Evidence(ref=f"local:{p.stem}:{i}", title=title,
-                                snippet=body, source=f"本地知识库/{p.name}",
-                                score=float(score)))
-    out.sort(key=lambda e: e.score, reverse=True)
-    return out[:cfg.search_max_evidence]
-
-
 def search_tavily(query: str, cfg: Config, client=None,
                   fetch_detail: bool = True) -> list[Evidence]:
     if not cfg.tavily_key:
@@ -327,7 +292,6 @@ def search_site(query: str, cfg: Config, client=None,
 # 也方便后续在不改这里的情况下覆盖某个 provider。
 SEARCH_FUNCS = {
     "ugnas-kb": "search_ugnas_kb",
-    "local": "search_local_kb",
     "site": "search_site",
     "tavily": "search_tavily",
     "bing": "search_bing",

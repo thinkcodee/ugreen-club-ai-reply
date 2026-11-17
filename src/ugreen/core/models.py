@@ -21,7 +21,7 @@ from ..util.textutil import (
 )
 
 KNOWN_SEARCH_PROVIDERS = (
-    "ugnas-kb", "local", "site", "tavily", "bing", "baidu",
+    "ugnas-kb", "site", "tavily", "bing", "baidu",
     "searxng", "custom",
 )
 

@@ -17,7 +17,7 @@
   7. B：保守模式——没有证据不得下确定性结论、不得编造版本号与参数；
      不确定时只追问一个关键信息或给排查方向。
   8. D：可插拔检索层，默认查询绿联官方知识库（support.ugnas.com 同源公开只读接口），
-     也可叠加本地知识库 / Tavily / Bing / SearXNG / 站内搜索 / 自定义端点，
+     也可叠加 Tavily / Bing / 百度 / SearXNG / 站内搜索 / 自定义端点，
      把检索到的片段作为证据注入 prompt，并要求回复标注引用了哪些证据。
 
 默认只演练不发帖。确认无误后设置 UGREEN_DRY_RUN=0 才会真正回复。
@@ -688,7 +688,7 @@ def parse_extra_body(raw: str) -> dict:
 
 
 KNOWN_SEARCH_PROVIDERS = (
-    "ugnas-kb", "local", "site", "tavily", "bing", "baidu",
+    "ugnas-kb", "site", "tavily", "bing", "baidu",
     "searxng", "custom",
 )
 
@@ -1190,7 +1190,6 @@ class Config:
     kb_fetch_detail: bool = True
     kb_detail_limit: int = 1
     web_fallback_threshold: int = 1
-    local_kb_dir: Path = SCRIPT_DIR / "knowledge"
     tavily_key: str = ""
     bing_key: str = ""
     searxng_url: str = ""
@@ -1365,8 +1364,6 @@ class Config:
         cfg.kb_fetch_detail = env_bool("UGREEN_KB_DETAIL", True)
         cfg.kb_detail_limit = max(0, env_int("UGREEN_KB_DETAIL_LIMIT", 1))
         cfg.web_fallback_threshold = max(0, env_int("UGREEN_WEB_FALLBACK_THRESHOLD", 1))
-        cfg.local_kb_dir = Path(env_str("UGREEN_LOCAL_KB_DIR")
-                                or SCRIPT_DIR / "knowledge")
         cfg.tavily_key = env_str("TAVILY_API_KEY")
         cfg.bing_key = (env_str("BING_SEARCH_KEY") or env_str("BING_API_KEY"))
         cfg.searxng_url = env_str("SEARXNG_URL")
@@ -1913,41 +1910,6 @@ def search_ugnas_kb(query: str, cfg: Config, client=None,
     return out
 
 
-def search_local_kb(query: str, cfg: Config, client=None,
-                    fetch_detail: bool = True) -> list[Evidence]:
-    """本地知识库：读 knowledge/*.md|txt，按 Markdown 标题分块做词频打分。"""
-    d = cfg.local_kb_dir
-    if not d.is_dir():
-        return []
-    terms = [x.lower() for x in re.split(r"[\s,，]+", query) if len(x) > 1]
-    if not terms:
-        return []
-    out: list[Evidence] = []
-    try:
-        files = sorted(list(d.glob("*.md")) + list(d.glob("*.txt")))
-    except OSError:
-        return []
-    for p in files:
-        try:
-            text = p.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        chunks = re.split(r"(?m)^#{1,4}\s+", text)
-        for i, ch in enumerate(chunks):
-            low = ch.lower()
-            score = sum(low.count(term) for term in terms)
-            if not score:
-                continue
-            lines = [x.strip() for x in ch.splitlines() if x.strip()]
-            title = lines[0][:60] if lines else p.stem
-            body = " ".join(lines[1:]) if len(lines) > 1 else " ".join(lines)
-            out.append(Evidence(ref=f"local:{p.stem}:{i}", title=title,
-                                snippet=body, source=f"本地知识库/{p.name}",
-                                score=float(score)))
-    out.sort(key=lambda e: e.score, reverse=True)
-    return out[:cfg.search_max_evidence]
-
-
 def search_tavily(query: str, cfg: Config, client=None,
                   fetch_detail: bool = True) -> list[Evidence]:
     if not cfg.tavily_key:
@@ -2111,7 +2073,6 @@ def search_site(query: str, cfg: Config, client=None,
 # 也方便后续在不改这里的情况下覆盖某个 provider。
 SEARCH_FUNCS = {
     "ugnas-kb": "search_ugnas_kb",
-    "local": "search_local_kb",
     "site": "search_site",
     "tavily": "search_tavily",
     "bing": "search_bing",
@@ -2588,7 +2549,6 @@ def describe_ai_config(cfg: Config) -> str:
         f"其余证据带 relevance 分数交给模型判断）",
         f"  绿联知识库: {KB_SEARCH_URL}  lang={cfg.search_language}  "
         f"取全文={'是' if cfg.kb_fetch_detail else '否'}",
-        f"  本地知识库: {cfg.local_kb_dir}",
         f"  联网补查  : 一手资料不足 {cfg.web_fallback_threshold} 条时触发",
         f"  联网源    : Tavily={'已配' if cfg.tavily_key else '未配'}  "
         f"Bing={'已配' if cfg.bing_key else '未配'}  "

@@ -285,7 +285,6 @@ def describe_ai_config(cfg: Config) -> str:
         f"其余证据带 relevance 分数交给模型判断）",
         f"  绿联知识库: {KB_SEARCH_URL}  lang={cfg.search_language}  "
         f"取全文={'是' if cfg.kb_fetch_detail else '否'}",
-        f"  本地知识库: {cfg.local_kb_dir}",
         f"  联网补查  : 一手资料不足 {cfg.web_fallback_threshold} 条时触发",
         f"  联网源    : Tavily={'已配' if cfg.tavily_key else '未配'}  "
         f"Bing={'已配' if cfg.bing_key else '未配'}  "

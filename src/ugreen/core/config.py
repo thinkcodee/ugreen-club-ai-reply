@@ -145,7 +145,6 @@ class Config:
     kb_fetch_detail: bool = True
     kb_detail_limit: int = 1
     web_fallback_threshold: int = 1
-    local_kb_dir: Path = SCRIPT_DIR / "knowledge"
     tavily_key: str = ""
     bing_key: str = ""
     searxng_url: str = ""
@@ -320,8 +319,6 @@ class Config:
         cfg.kb_fetch_detail = env_bool("UGREEN_KB_DETAIL", True)
         cfg.kb_detail_limit = max(0, env_int("UGREEN_KB_DETAIL_LIMIT", 1))
         cfg.web_fallback_threshold = max(0, env_int("UGREEN_WEB_FALLBACK_THRESHOLD", 1))
-        cfg.local_kb_dir = Path(env_str("UGREEN_LOCAL_KB_DIR")
-                                or SCRIPT_DIR / "knowledge")
         cfg.tavily_key = env_str("TAVILY_API_KEY")
         cfg.bing_key = (env_str("BING_SEARCH_KEY") or env_str("BING_API_KEY"))
         cfg.searxng_url = env_str("SEARXNG_URL")
