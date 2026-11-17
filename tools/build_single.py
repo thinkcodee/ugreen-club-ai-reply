@@ -23,6 +23,16 @@ ROOT = Path(__file__).resolve().parent.parent
 PKG = ROOT / "src" / "ugreen"
 OUT = ROOT / "ugreen_ai_reply.py"
 
+
+def pkg_version() -> str:
+    """从包源码里读版本号（唯一真相源是 src/ugreen/__init__.py）。"""
+    src = (PKG / "__init__.py").read_text(encoding="utf-8")
+    m = re.search(r'^__version__\s*=\s*"([^"]+)"', src, re.M)
+    if not m:
+        raise SystemExit("在 src/ugreen/__init__.py 里找不到 __version__ 定义")
+    return m.group(1)
+
+
 # 内联顺序 = 依赖拓扑序（被依赖的在前）
 ORDER = [
     "core/deps.py",
@@ -69,10 +79,17 @@ HEADER = '''#!/usr/bin/env python3
 
 默认只演练不发帖。确认无误后设置 UGREEN_DRY_RUN=0 才会真正回复。
 
+版本：{version}
+
 许可证：MIT License © 2026 thinkcodee
 （单文件版内附许可证全文见文件末尾）
 """
 '''
+
+
+def header_text() -> str:
+    """生成带版本号的文件头。"""
+    return HEADER.replace("{version}", pkg_version())
 
 
 def collapse_blank_lines(lines: list[str], max_blank: int = 2) -> list[str]:
@@ -208,8 +225,14 @@ if __name__ == "__main__":
         sys.exit(130)
 '''
 
-    return (HEADER
-            + "\nfrom __future__ import annotations\n\n"
+    # __version__ 放在模块 docstring 之后、import 之前，
+    # 让单文件与包对外暴露同样的版本号（测试会校验三处一致）。
+    version_line = f'\n__version__ = "{pkg_version()}"\n'
+
+    return (header_text()
+            + "\nfrom __future__ import annotations\n"
+            + version_line
+            + "\n"
             + imports_block + "\n"
             + "\n\n".join(chunks)
             + tail

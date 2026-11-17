@@ -105,7 +105,7 @@ from .runtime.cli import build_parser, main  # noqa: F401
 from .runtime.notify import send_notification  # noqa: F401
 from .runtime.report import render_notify, render_report  # noqa: F401
 
-__version__ = "1.1.6"
+__version__ = "1.3.0"
 
 __all__ = [
     "__version__",

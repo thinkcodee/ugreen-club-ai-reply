@@ -50,6 +50,11 @@ def load_toml(path: Path) -> dict:
     if m:
         out["project"]["name"] = m.group(1)
 
+    # project.version
+    m = re.search(r'^version\s*=\s*"([^"]+)"', src, re.M)
+    if m:
+        out["project"]["version"] = m.group(1)
+
     # license = { file = "LICENSE" }  或  license = { text = "MIT" }
     m = re.search(r"^license\s*=\s*\{(.*?)\}", src, re.S | re.M)
     if m:
@@ -386,6 +391,56 @@ class DependencyDeclarationTest(unittest.TestCase):
         for cmd in data.get("project", {}).get("scripts", {}):
             self.assertTrue(cmd.startswith("ugreen-club-ai-reply"),
                             f"命令行入口 {cmd} 与包名不一致")
+
+    def test_version_consistent_everywhere(self):
+        """版本号必须在 pyproject、包、单文件三处一致。
+
+        历史坑：v1.2.0 发布时三处版本号还停在 1.1.6，
+        发出去的包元数据与实际功能对不上。
+        """
+        data = load_toml(ROOT / "pyproject.toml")
+        py_ver = data["project"]["version"]
+
+        pkg_ver = ugreen.__version__
+
+        single_src = SINGLE.read_text(encoding="utf-8")
+        m = re.search(r'^__version__\s*=\s*"([^"]+)"', single_src, re.M)
+        self.assertIsNotNone(m, "单文件里找不到 __version__ 定义")
+        single_ver = m.group(1)
+
+        self.assertEqual(py_ver, pkg_ver,
+                         f"pyproject 版本 {py_ver} 与包内 __version__ {pkg_ver} 不一致")
+        self.assertEqual(py_ver, single_ver,
+                         f"pyproject 版本 {py_ver} 与单文件 {single_ver} 不一致")
+
+    def test_version_matches_latest_tag(self):
+        """版本号应与最新的 git tag 对应。
+
+        只在「最新 tag 正好指向当前提交」时检查 ——
+        否则开发中的中间提交本来就不该等于某个 tag。
+        """
+        try:
+            out = subprocess.run(
+                ["git", "describe", "--tags", "--abbrev=0"],
+                capture_output=True, text=True, cwd=str(ROOT), timeout=30)
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True, text=True, cwd=str(ROOT), timeout=30)
+            tag_sha = subprocess.run(
+                ["git", "rev-list", "-n", "1", out.stdout.strip()],
+                capture_output=True, text=True, cwd=str(ROOT), timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            self.skipTest("无法调用 git")
+        if out.returncode != 0 or not out.stdout.strip():
+            self.skipTest("本地没有可用的 git tag")
+        if tag_sha.stdout.strip() != head.stdout.strip():
+            # 最新 tag 指向的是别的提交（开发中的中间状态），跳过
+            self.skipTest("最新 tag 未指向当前提交")
+
+        latest = out.stdout.strip()
+        data = load_toml(ROOT / "pyproject.toml")
+        self.assertEqual(data["project"]["version"], latest.lstrip("v"),
+                         f"版本号 {data['project']['version']} 与最新 tag {latest} 不一致")
 
 
 class LicenseTest(unittest.TestCase):
