@@ -689,7 +689,20 @@ core（常量/结构/配置）→ util（通用工具）→ forum / search / ai�
 | 改逻辑 | 改 `src/ugreen/` 下对应模块，然后 `python tools/build_single.py` 重新生成单文件 |
 | 只用不开发 | 直接用 `ugreen_ai_reply.py`，不用管 `src/` 目录 |
 | 本地开发调试 | `pip install -e .` 后 `ugreen-ai-reply --dry-run`，或 `python -m ugreen --dry-run`（需先 `pip install -e .`） |
-| 确认单文件没过期 | `python tools/build_single.py --check`（测试里也会自动校验） |
+| 确认单文件没过期 | `python tools/build_single.py --check`（测试里也会自动校验，CI 也会跑） |
 
 改动 `src/ugreen/` 后忘了重新构建，测试会直接失败（`test_single_file_is_up_to_date`），不会出现「改了包、跑的还是旧逻辑」这种坑。
+
+### GitHub Actions
+
+仓库配了两个工作流：
+
+| 工作流 | 触发 | 做什么 |
+| --- | --- | --- |
+| `ci.yml` | push / PR / 手动 | 在 Python 3.9 / 3.11 / 3.13 上跑 195 项测试，并校验单文件产物与源码一致。**产物过期会直接失败** |
+| `build-single.yml` | 发布 Release / 手动 | 重新生成单文件、跑测试；发版时把产物上传到 Release 附件，手动触发时可选把改动提交回 `main` |
+
+手动触发构建：仓库 **Actions → 构建单文件产物 → Run workflow**。
+
+`ci.yml` 是「忘了构建」的最后一道防线——即使本地忘了跑 `build_single.py`，PR 也会被拦下。
 
