@@ -1,1 +1,82 @@
-bmFtZTog5p6E5bu65Y2V5paH5Lu25Lqn54mpCgojIOinpuWPkeaXtuacuu+8mgojICAgMS4g5Y+R5biD5pawIFJlbGVhc2Ug5pe2IOKAlOKAlCDoh6rliqjph43mlrDnlJ/miJDljZXmlofku7blubbpmYTliLAgUmVsZWFzZSDkuIoKIyAgIDIuIOaJi+WKqOinpuWPke+8iHdvcmtmbG93X2Rpc3BhdGNo77yJ4oCU4oCUIOaUueWujOa6kOeggeWQjuWPr+aJi+WKqOmHjeW7ugpvbjoKICByZWxlYXNlOgogICAgdHlwZXM6IFtwdWJsaXNoZWRdCiAgd29ya2Zsb3dfZGlzcGF0Y2g6CiAgICBpbnB1dHM6CiAgICAgIGNvbW1pdF9jaGFuZ2VzOgogICAgICAgIGRlc2NyaXB0aW9uOiAi5piv5ZCm5oqK6YeN5paw55Sf5oiQ55qEIHVncmVlbl9haV9yZXBseS5weSDmj5DkuqTlm57ku5PlupMiCiAgICAgICAgdHlwZTogYm9vbGVhbgogICAgICAgIGRlZmF1bHQ6IHRydWUKCnBlcm1pc3Npb25zOgogIGNvbnRlbnRzOiB3cml0ZQoKam9iczoKICBidWlsZDoKICAgIG5hbWU6IOmHjeaWsOeUn+aIkOWNleaWh+S7tgogICAgcnVucy1vbjogdWJ1bnR1LWxhdGVzdAogICAgc3RlcHM6CiAgICAgIC0gdXNlczogYWN0aW9ucy9jaGVja291dEB2NAogICAgICAgIHdpdGg6CiAgICAgICAgICAjIOWPkeeJiOaXtuS7pSB0YWcg5a+55bqU55qE5o+Q5Lqk5Li65YeG77yb5omL5Yqo6Kem5Y+R5pe255So5b2T5YmN5YiG5pSvCiAgICAgICAgICByZWY6ICR7eyBnaXRodWIuZXZlbnRfbmFtZSA9PSAncmVsZWFzZScgJiYgZ2l0aHViLmV2ZW50LnJlbGVhc2UudGFnX25hbWUgfHwgZ2l0aHViLnJlZiB9fQogICAgICAgICAgIyDlrozmlbTljoblj7LvvJrmj5DkuqTlm54gbWFpbiDml7bpnIDopoHln7rkuo7ov5znq6/mnIDmlrAgbWFpbiDph43lu7rmj5DkuqTvvIwKICAgICAgICAgICMg5ZCm5YiZ5rWF5YWL6ZqG5LiLIHB1c2gg5Lya6YCA5YyW5oiQIGZvcmNlIOimhueblu+8jOS4ouaOieWIq+S6uueahOaPkOS6pAogICAgICAgICAgZmV0Y2gtZGVwdGg6IDAKCiAgICAgIC0gbmFtZTog5a6J6KOFIFB5dGhvbgogICAgICAgIHVzZXM6IGFjdGlvbnMvc2V0dXAtcHl0aG9uQHY1CiAgICAgICAgd2l0aDoKICAgICAgICAgIHB5dGhvbi12ZXJzaW9uOiAiMy4xMSIKCiAgICAgIC0gbmFtZTog5a6J6KOF5L6d6LWWCiAgICAgICAgcnVuOiB8CiAgICAgICAgICBweXRob24gLW0gcGlwIGluc3RhbGwgLS11cGdyYWRlIHBpcAogICAgICAgICAgcGlwIGluc3RhbGwgLXIgcmVxdWlyZW1lbnRzLnR4dAoKICAgICAgLSBuYW1lOiDph43mlrDnlJ/miJDljZXmlofku7bkuqfniakKICAgICAgICBydW46IHwKICAgICAgICAgIHB5dGhvbiB0b29scy9idWlsZF9zaW5nbGUucHkKICAgICAgICAgIGNwIHVncmVlbl9haV9yZXBseS5weSAiJFJVTk5FUl9URU1QL3VncmVlbl9haV9yZXBseS5weSIKCiAgICAgIC0gbmFtZTog6L+Q6KGM5rWL6K+VCiAgICAgICAgcnVuOiBweXRob24gLW0gdW5pdHRlc3QgZGlzY292ZXIgLXMgdGVzdHMgLXYKCiAgICAgIC0gbmFtZTog5qCh6aqM5Lqn54mp5LiO5rqQ56CB5LiA6Ie0CiAgICAgICAgcnVuOiBweXRob24gdG9vbHMvYnVpbGRfc2luZ2xlLnB5IC0tY2hlY2sKCiAgICAgIC0gbmFtZTog5o+Q5Lqk5Y+Y5pu05YiwIG1haW4KICAgICAgICBpZjogZ2l0aHViLmV2ZW50X25hbWUgPT0gJ3dvcmtmbG93X2Rpc3BhdGNoJyAmJiBpbnB1dHMuY29tbWl0X2NoYW5nZXMKICAgICAgICBydW46IHwKICAgICAgICAgIGlmIGdpdCBkaWZmIC0tcXVpZXQgLS0gdWdyZWVuX2FpX3JlcGx5LnB5OyB0aGVuCiAgICAgICAgICAgIGVjaG8gIuWNleaWh+S7tuW3suaYr+acgOaWsO+8jOaXoOmcgOaPkOS6pCIKICAgICAgICAgICAgZXhpdCAwCiAgICAgICAgICBmaQogICAgICAgICAgIyDlv4Xpobvln7rkuo7ov5znq6/mnIDmlrAgbWFpbiDph43lu7rmj5DkuqTvvJoKICAgICAgICAgICMg6Iul5pys5ZywIEhFQUQg5bey6JC95ZCO5LqO6L+c56uv77yM55u05o6lIHB1c2gg5Lya5aSx6LSl5oiW6KaG55uW5Yir5Lq655qE5o+Q5Lqk44CCCiAgICAgICAgICBnaXQgZmV0Y2ggb3JpZ2luIG1haW4KICAgICAgICAgIGdpdCBjaGVja291dCAtQiByZWJ1aWxkIG9yaWdpbi9tYWluCiAgICAgICAgICAjIOaKiumHjeaWsOeUn+aIkOeahOS6p+eJqeW4pui/h+WOuwogICAgICAgICAgY3AgIiRSVU5ORVJfVEVNUC91Z3JlZW5fYWlfcmVwbHkucHkiIHVncmVlbl9haV9yZXBseS5weQogICAgICAgICAgZ2l0IGFkZCB1Z3JlZW5fYWlfcmVwbHkucHkKICAgICAgICAgIGdpdCBkaWZmIC0tY2FjaGVkIC0tcXVpZXQgJiYgeyBlY2hvICLov5znq6/lt7LmnInnm7jlkIzkuqfnianvvIzot7Pov4ciOyBleGl0IDA7IH0KICAgICAgICAgIGdpdCBjb25maWcgdXNlci5uYW1lICAiZ2l0aHViLWFjdGlvbnNbYm90XSIKICAgICAgICAgIGdpdCBjb25maWcgdXNlci5lbWFpbCAiNDE4OTgyODIrZ2l0aHViLWFjdGlvbnNbYm90XUB1c2Vycy5ub3JlcGx5LmdpdGh1Yi5jb20iCiAgICAgICAgICBnaXQgY29tbWl0IC1tICJjaG9yZTog6YeN5paw55Sf5oiQ5Y2V5paH5Lu25Lqn54mpIgogICAgICAgICAgIyAtLWZvcmNlLXdpdGgtbGVhc2XvvJrov5znq6/ooqvliKvkurrmlLnov4flsLHmi5Lnu53vvIzogIzkuI3mmK/opobnm5YKICAgICAgICAgIGdpdCBwdXNoIC0tZm9yY2Utd2l0aC1sZWFzZSBvcmlnaW4gSEVBRDptYWluCgogICAgICAtIG5hbWU6IOS4iuS8oOS6p+eJqeWIsCBSZWxlYXNlCiAgICAgICAgaWY6IGdpdGh1Yi5ldmVudF9uYW1lID09ICdyZWxlYXNlJwogICAgICAgIGVudjoKICAgICAgICAgIEdIX1RPS0VOOiAke3sgc2VjcmV0cy5HSVRIVUJfVE9LRU4gfX0KICAgICAgICBydW46IHwKICAgICAgICAgIGdoIHJlbGVhc2UgdXBsb2FkICIke3sgZ2l0aHViLmV2ZW50LnJlbGVhc2UudGFnX25hbWUgfX0iIFwKICAgICAgICAgICAgdWdyZWVuX2FpX3JlcGx5LnB5IFwKICAgICAgICAgICAgLS1jbG9iYmVyIFwKICAgICAgICAgICAgIiMg5Y2V5paH5Lu25Lqn54mp77yI6Z2S6b6Z55u05o6l55So6L+Z5Liq77yJIgo=
+name: 构建单文件产物
+
+# 触发时机：
+#   1. 发布新 Release 时 —— 自动重新生成单文件并附到 Release 上
+#   2. 手动触发（workflow_dispatch）—— 改完源码后可手动重建
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      commit_changes:
+        description: "是否把重新生成的 ugreen_ai_reply.py 提交回仓库"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: 重新生成单文件
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 发版时以 tag 对应的提交为准；手动触发时用当前分支
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+          # 完整历史：提交回 main 时需要基于远端最新 main 重建提交，
+          # 否则浅克隆下 push 会退化成 force 覆盖，丢掉别人的提交
+          fetch-depth: 0
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 重新生成单文件产物
+        run: |
+          python tools/build_single.py
+          cp ugreen_ai_reply.py "$RUNNER_TEMP/ugreen_ai_reply.py"
+
+      - name: 运行测试
+        run: python -m unittest discover -s tests -v
+
+      - name: 校验产物与源码一致
+        run: python tools/build_single.py --check
+
+      - name: 提交变更到 main
+        if: github.event_name == 'workflow_dispatch' && inputs.commit_changes
+        run: |
+          if git diff --quiet -- ugreen_ai_reply.py; then
+            echo "单文件已是最新，无需提交"
+            exit 0
+          fi
+          # 必须基于远端最新 main 重建提交：
+          # 若本地 HEAD 已落后于远端，直接 push 会失败或覆盖别人的提交。
+          git fetch origin main
+          git checkout -B rebuild origin/main
+          # 把重新生成的产物带过去
+          cp "$RUNNER_TEMP/ugreen_ai_reply.py" ugreen_ai_reply.py
+          git add ugreen_ai_reply.py
+          git diff --cached --quiet && { echo "远端已有相同产物，跳过"; exit 0; }
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: 重新生成单文件产物"
+          # --force-with-lease：远端被别人改过就拒绝，而不是覆盖
+          git push --force-with-lease origin HEAD:main
+
+      - name: 上传产物到 Release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            ugreen_ai_reply.py \
+            --clobber \
+            "# 单文件产物（青龙直接用这个）"

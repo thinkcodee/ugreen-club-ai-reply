@@ -1,1 +1,329 @@
-IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwojIC0qLSBjb2Rpbmc6IHV0Zi04IC0qLQoiIiLljIXnu5PmnoTmtYvor5XvvJrmqKHlnZfovrnnlYzjgIHkvp3otZbmlrnlkJHjgIHljZXmlofku7bmnoTlu7rkuqfniankuIDoh7TmgKfjgIIKCuS4jiB0ZXN0X2NvcmUucHkg5LqS6KGl77ya6YKj5Liq5rWL44CM6KGM5Li65a+55LiN5a+544CN77yM6L+Z5Liq5rWL44CM5bel56iL57uT5p6E5a+55LiN5a+544CN44CCCiIiIgoKaW1wb3J0IGFzdAppbXBvcnQgaW1wb3J0bGliCmltcG9ydCByZQppbXBvcnQgc3VicHJvY2VzcwppbXBvcnQgc3lzCmltcG9ydCB1bml0dGVzdApmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKCnRyeTogICMgUHl0aG9uIDMuMTErCiAgICBpbXBvcnQgdG9tbGxpYgpleGNlcHQgSW1wb3J0RXJyb3I6ICAjIHByYWdtYTogbm8gY292ZXIgLSBQeXRob24gMy45IC8gMy4xMAogICAgdG9tbGxpYiA9IE5vbmUKCgpkZWYgbG9hZF90b21sKHBhdGg6IFBhdGgpIC0+IGRpY3Q6CiAgICAiIiLor7sgcHlwcm9qZWN0LnRvbWzjgIIzLjExKyDnlKjmoIflh4blupMgdG9tbGxpYu+8jOS9jueJiOacrOeUqOacgOWwj+ato+WImeino+aekOOAggoKICAgIOWPquino+aekOi/meS4qua1i+ivlemcgOimgeeahOWtl+aute+8iGRlcGVuZGVuY2llcyDmlbDnu4QgKyB0b29sLnNldHVwdG9vbHMg5q6177yJ77yMCiAgICDkuI3lvJXnrKzkuInmlrkgdG9tbGkg5L6d6LWWIOKAlOKAlCBDSSDopoHopobnm5YgMy4544CCCiAgICAiIiIKICAgIGlmIHRvbWxsaWIgaXMgbm90IE5vbmU6CiAgICAgICAgcmV0dXJuIHRvbWxsaWIubG9hZHMocGF0aC5yZWFkX3RleHQoZW5jb2Rpbmc9InV0Zi04IikpCgogICAgc3JjID0gcGF0aC5yZWFkX3RleHQoZW5jb2Rpbmc9InV0Zi04IikKICAgIG91dDogZGljdCA9IHsicHJvamVjdCI6IHt9LCAidG9vbCI6IHsic2V0dXB0b29scyI6IHt9fX0KCiAgICBtID0gcmUuc2VhcmNoKHIiXmRlcGVuZGVuY2llc1xzKj1ccypcWyguKj8pXF0iLCBzcmMsIHJlLlMgfCByZS5NKQogICAgaWYgbToKICAgICAgICBvdXRbInByb2plY3QiXVsiZGVwZW5kZW5jaWVzIl0gPSByZS5maW5kYWxsKAogICAgICAgICAgICByJyIoW14iXSspIicsIG0uZ3JvdXAoMSkpCgogICAgbSA9IHJlLnNlYXJjaChyJ3BhY2thZ2UtZGlyXHMqPVxzKlx7XHMqIiJccyo9XHMqIihbXiJdKykiXHMqXH0nLCBzcmMpCiAgICBpZiBtOgogICAgICAgIG91dFsidG9vbCJdWyJzZXR1cHRvb2xzIl1bInBhY2thZ2UtZGlyIl0gPSB7IiI6IG0uZ3JvdXAoMSl9CgogICAgbSA9IHJlLnNlYXJjaChyIndoZXJlXHMqPVxzKlxbKFteXF1dKilcXSIsIHNyYykKICAgIGlmIG06CiAgICAgICAgb3V0WyJ0b29sIl1bInNldHVwdG9vbHMiXS5zZXRkZWZhdWx0KCJwYWNrYWdlcyIsIHt9KVsiZmluZCJdID0gewogICAgICAgICAgICAid2hlcmUiOiByZS5maW5kYWxsKHInIihbXiJdKykiJywgbS5ncm91cCgxKSl9CgogICAgcmV0dXJuIG91dAoKUk9PVCA9IFBhdGgoX19maWxlX18pLnJlc29sdmUoKS5wYXJlbnRzWzFdCiMgc3JjIOW4g+WxgO+8muWMheWcqCBzcmMvIOS4i++8jOa1i+ivleebtOaOpeS7jua6kOeggeagkeWvvOWFpe+8iOetieS7t+S6jiBwaXAgaW5zdGFsbCAtZSAu77yJCnN5cy5wYXRoLmluc2VydCgwLCBzdHIoUk9PVCAvICJzcmMiKSkKCmltcG9ydCB1Z3JlZW4gICMgbm9xYTogRTQwMgoKUEtHID0gUk9PVCAvICJzcmMiIC8gInVncmVlbiIKU0lOR0xFID0gUk9PVCAvICJ1Z3JlZW5fYWlfcmVwbHkucHkiCgojIOWtkOWMhSAtPiDor6XlrZDljIXkuIvnmoTmqKHlnZcKU1VCUEFDS0FHRVMgPSB7CiAgICAiY29yZSI6IFsiY29uc3RhbnRzIiwgIm1vZGVscyIsICJjb25maWciLCAiZGVwcyJdLAogICAgInV0aWwiOiBbImVudnV0aWwiLCAidGV4dHV0aWwiLCAidGltZXV0aWwiLCAiYWl1dGlsIl0sCiAgICAiZm9ydW0iOiBbImNsaWVudCIsICJjbGFzc2lmeSIsICJzdGF0ZSIsICJyZXZpc2l0Il0sCiAgICAic2VhcmNoIjogWyJwcm92aWRlcnMiXSwKICAgICJhaSI6IFsiY2xpZW50IiwgInF1YWxpdHkiXSwKICAgICJydW50aW1lIjogWyJjbGkiLCAibm90aWZ5IiwgInJlcG9ydCJdLAp9CgojIOS+nei1luaWueWQke+8muW3pui+ueS4jeW+lyBpbXBvcnQg5Y+z6L6577yI6YG/5YWN5b6q546v5L6d6LWW5LiO5YiG5bGC5YCS572u77yJCkxBWUVSX09SREVSID0gWwogICAgImNvcmUuZGVwcyIsCiAgICAiY29yZS5jb25zdGFudHMiLAogICAgInV0aWwuZW52dXRpbCIsCiAgICAidXRpbC50ZXh0dXRpbCIsCiAgICAidXRpbC50aW1ldXRpbCIsCiAgICAidXRpbC5haXV0aWwiLAogICAgImNvcmUubW9kZWxzIiwKICAgICJmb3J1bS5jbGFzc2lmeSIsCiAgICAiY29yZS5jb25maWciLAogICAgImZvcnVtLmNsaWVudCIsCiAgICAic2VhcmNoLnByb3ZpZGVycyIsCiAgICAiYWkucXVhbGl0eSIsCiAgICAiYWkuY2xpZW50IiwKICAgICJmb3J1bS5yZXZpc2l0IiwKICAgICJmb3J1bS5zdGF0ZSIsCiAgICAicnVudGltZS5ub3RpZnkiLAogICAgInJ1bnRpbWUucmVwb3J0IiwKICAgICJydW50aW1lLmNsaSIsCl0KCgpkZWYgbW9kdWxlX2ZpbGVzKCkgLT4gbGlzdFtQYXRoXToKICAgIHJldHVybiBzb3J0ZWQocCBmb3IgcCBpbiBQS0cucmdsb2IoIioucHkiKQogICAgICAgICAgICAgICAgICBpZiBwLm5hbWUgIT0gIl9faW5pdF9fLnB5IikKCgpkZWYgbW9kdWxlX2lkKHBhdGg6IFBhdGgpIC0+IHN0cjoKICAgICIiInNyYy91Z3JlZW4vZm9ydW0vY2xpZW50LnB5IC0+IGZvcnVtLmNsaWVudCIiIgogICAgcmVsID0gcGF0aC5yZWxhdGl2ZV90byhQS0cpLndpdGhfc3VmZml4KCIiKQogICAgcmV0dXJuICIuIi5qb2luKHJlbC5wYXJ0cykKCgpkZWYgcGFyc2UocGF0aDogUGF0aCkgLT4gYXN0Lk1vZHVsZToKICAgIHJldHVybiBhc3QucGFyc2UocGF0aC5yZWFkX3RleHQoZW5jb2Rpbmc9InV0Zi04IikpCgoKZGVmIGltcG9ydF90YXJnZXRzKHBhdGg6IFBhdGgpIC0+IHNldFtzdHJdOgogICAgIiIi6K+l5qih5Z2X5a+85YWl55qE5YWE5byf5qih5Z2XIGlk77yI5YyF5YaF55u45a+55a+85YWl6Kej5p6Q5oiQ54K55YiG6Lev5b6E77yJ44CCIiIiCiAgICBvdXQ6IHNldFtzdHJdID0gc2V0KCkKICAgIHBrZ19wYXJ0cyA9IHBhdGgucmVsYXRpdmVfdG8oUEtHKS5wYXJ0c1s6LTFdCiAgICBmb3Igbm9kZSBpbiBhc3Qud2FsayhwYXJzZShwYXRoKSk6CiAgICAgICAgaWYgbm90IGlzaW5zdGFuY2Uobm9kZSwgYXN0LkltcG9ydEZyb20pIG9yIG5vdCBub2RlLm1vZHVsZToKICAgICAgICAgICAgY29udGludWUKICAgICAgICBpZiBub2RlLmxldmVsID09IDA6CiAgICAgICAgICAgIGNvbnRpbnVlICAjIOe7neWvueWvvOWFpe+8iOagh+WHhuW6ky/kuInmlrnvvIkKICAgICAgICBiYXNlID0gbGlzdChwa2dfcGFydHMpCiAgICAgICAgIyBsZXZlbD0xIOihqOekuuW9k+WJjeWMhe+8jGxldmVsPTIg6KGo56S65LiK5LiA57qnCiAgICAgICAgaWYgbm9kZS5sZXZlbCA+IDE6CiAgICAgICAgICAgIGJhc2UgPSBiYXNlWzpsZW4oYmFzZSkgLSAobm9kZS5sZXZlbCAtIDEpXQogICAgICAgIGlmIG5vZGUubW9kdWxlOgogICAgICAgICAgICBiYXNlID0gYmFzZSArIG5vZGUubW9kdWxlLnNwbGl0KCIuIikKICAgICAgICBlbHNlOgogICAgICAgICAgICBiYXNlID0gYmFzZSArIFthLm5hbWUgZm9yIGEgaW4gbm9kZS5uYW1lc11bOjFdCiAgICAgICAgIyBmcm9tIC4gaW1wb3J0IHggIC0+IHgg5piv5a2Q5qih5Z2XCiAgICAgICAgaWYgbm90IG5vZGUubW9kdWxlOgogICAgICAgICAgICBmb3IgYSBpbiBub2RlLm5hbWVzOgogICAgICAgICAgICAgICAgb3V0LmFkZCgiLiIuam9pbihiYXNlICsgW2EubmFtZV0pKQogICAgICAgICAgICBjb250aW51ZQogICAgICAgIG91dC5hZGQoIi4iLmpvaW4oYmFzZSkpCiAgICByZXR1cm4gb3V0CgoKY2xhc3MgUGFja2FnZUxheW91dFRlc3QodW5pdHRlc3QuVGVzdENhc2UpOgogICAgIiIi5YyF57uT5p6E5Z+65pys5b2i54q244CCIiIiCgogICAgZGVmIHRlc3Rfc3VicGFja2FnZXNfZXhpc3Qoc2VsZik6CiAgICAgICAgZm9yIHBrZywgbW9kcyBpbiBTVUJQQUNLQUdFUy5pdGVtcygpOgogICAgICAgICAgICBzZWxmLmFzc2VydFRydWUoKFBLRyAvIHBrZyAvICJfX2luaXRfXy5weSIpLmV4aXN0cygpLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgZiLnvLrlsJHlrZDljIUge3BrZ30vX19pbml0X18ucHkiKQogICAgICAgICAgICBmb3IgbW9kIGluIG1vZHM6CiAgICAgICAgICAgICAgICBzZWxmLmFzc2VydFRydWUoKFBLRyAvIHBrZyAvIGYie21vZH0ucHkiKS5leGlzdHMoKSwKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBmIue8uuWwkeaooeWdlyB7cGtnfS97bW9kfS5weSIpCgogICAgZGVmIHRlc3RfaGFzX2luaXRfYW5kX21haW4oc2VsZik6CiAgICAgICAgc2VsZi5hc3NlcnRUcnVlKChQS0cgLyAiX19pbml0X18ucHkiKS5leGlzdHMoKSkKICAgICAgICBzZWxmLmFzc2VydFRydWUoKFBLRyAvICJfX21haW5fXy5weSIpLmV4aXN0cygpKQoKICAgIGRlZiB0ZXN0X25vX2R1cGxpY2F0ZV90b3BfbGV2ZWxfbmFtZXMoc2VsZik6CiAgICAgICAgIiIi5qih5Z2X5LmL6Ze05LiN6IO95pyJ5ZCM5ZCN6aG25bGC56ym5Y+377yM5ZCm5YiZ5YaF6IGU5oiQ5Y2V5paH5Lu25Lya5LqS55u46KaG55uW44CCIiIiCiAgICAgICAgc2VlbjogZGljdFtzdHIsIHN0cl0gPSB7fQogICAgICAgIGR1cGVzID0gW10KICAgICAgICBmb3IgcCBpbiBtb2R1bGVfZmlsZXMoKToKICAgICAgICAgICAgZm9yIG5vZGUgaW4gcGFyc2UocCkuYm9keToKICAgICAgICAgICAgICAgIG5hbWVzID0gW10KICAgICAgICAgICAgICAgIGlmIGlzaW5zdGFuY2Uobm9kZSwgKGFzdC5GdW5jdGlvbkRlZiwgYXN0LkFzeW5jRnVuY3Rpb25EZWYsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBhc3QuQ2xhc3NEZWYpKToKICAgICAgICAgICAgICAgICAgICBuYW1lcyA9IFtub2RlLm5hbWVdCiAgICAgICAgICAgICAgICBlbGlmIGlzaW5zdGFuY2Uobm9kZSwgYXN0LkFzc2lnbik6CiAgICAgICAgICAgICAgICAgICAgbmFtZXMgPSBbdC5pZCBmb3IgdCBpbiBub2RlLnRhcmdldHMKICAgICAgICAgICAgICAgICAgICAgICAgICAgICBpZiBpc2luc3RhbmNlKHQsIGFzdC5OYW1lKV0KICAgICAgICAgICAgICAgIGVsaWYgaXNpbnN0YW5jZShub2RlLCBhc3QuQW5uQXNzaWduKSBhbmQgaXNpbnN0YW5jZSgKICAgICAgICAgICAgICAgICAgICAgICAgbm9kZS50YXJnZXQsIGFzdC5OYW1lKToKICAgICAgICAgICAgICAgICAgICBuYW1lcyA9IFtub2RlLnRhcmdldC5pZF0KICAgICAgICAgICAgICAgIGZvciBuIGluIG5hbWVzOgogICAgICAgICAgICAgICAgICAgIGlmIG4gaW4gc2VlbiBhbmQgc2VlbltuXSAhPSBtb2R1bGVfaWQocCk6CiAgICAgICAgICAgICAgICAgICAgICAgIGR1cGVzLmFwcGVuZChmIntufe+8iHtzZWVuW25dfSDkuI4ge21vZHVsZV9pZChwKX3vvIkiKQogICAgICAgICAgICAgICAgICAgIHNlZW5bbl0gPSBtb2R1bGVfaWQocCkKICAgICAgICBzZWxmLmFzc2VydEVxdWFsKGR1cGVzLCBbXSwgZiLot6jmqKHlnZfph43lkI3vvJp7ZHVwZXN9IikKCiAgICBkZWYgdGVzdF9kZXBlbmRlbmN5X2RpcmVjdGlvbihzZWxmKToKICAgICAgICAiIiLkuIrlsYLlj6/ku6Xkvp3otZbkuIvlsYLvvIzkuIvlsYLkuI3lvpfkvp3otZbkuIrlsYLjgIIiIiIKICAgICAgICBpZHggPSB7bmFtZTogaSBmb3IgaSwgbmFtZSBpbiBlbnVtZXJhdGUoTEFZRVJfT1JERVIpfQogICAgICAgIHZpb2xhdGlvbnMgPSBbXQogICAgICAgIGZvciBwIGluIG1vZHVsZV9maWxlcygpOgogICAgICAgICAgICBtaWQgPSBtb2R1bGVfaWQocCkKICAgICAgICAgICAgaWYgbWlkIG5vdCBpbiBpZHg6CiAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICBmb3IgZGVwIGluIGltcG9ydF90YXJnZXRzKHApOgogICAgICAgICAgICAgICAgaWYgZGVwIGluIGlkeCBhbmQgaWR4W2RlcF0gPiBpZHhbbWlkXToKICAgICAgICAgICAgICAgICAgICB2aW9sYXRpb25zLmFwcGVuZChmInttaWR9IC0+IHtkZXB9IikKICAgICAgICBzZWxmLmFzc2VydEVxdWFsKHZpb2xhdGlvbnMsIFtdLAogICAgICAgICAgICAgICAgICAgICAgICAgZiLlrZjlnKjlj43lkJHkvp3otZbvvIjkvJrlvaLmiJDlvqrnjq/vvInvvJp7dmlvbGF0aW9uc30iKQoKICAgIGRlZiB0ZXN0X25vX21vZHVsZV9pbXBvcnRzX3BhY2thZ2Vfcm9vdChzZWxmKToKICAgICAgICAiIiLlrZDmqKHlnZfkuI3og70gZnJvbSAuIGltcG9ydCB4eHjvvIzlkKbliJnkvJrop6blj5Hlvqrnjq/lr7zlhaXjgIIiIiIKICAgICAgICBiYWQgPSBbXQogICAgICAgIGZvciBwIGluIG1vZHVsZV9maWxlcygpOgogICAgICAgICAgICBmb3Igbm9kZSBpbiBhc3Qud2FsayhwYXJzZShwKSk6CiAgICAgICAgICAgICAgICBpZiAoaXNpbnN0YW5jZShub2RlLCBhc3QuSW1wb3J0RnJvbSkgYW5kIG5vZGUubGV2ZWwgPT0gMQogICAgICAgICAgICAgICAgICAgICAgICBhbmQgbm9kZS5tb2R1bGUgaXMgTm9uZSk6CiAgICAgICAgICAgICAgICAgICAgYmFkLmFwcGVuZChtb2R1bGVfaWQocCkpCiAgICAgICAgc2VsZi5hc3NlcnRFcXVhbChiYWQsIFtdLCAi5a2Q5qih5Z2X5LiN5bqU5LuO5YyF5qC55a+85YWlIikKCiAgICBkZWYgdGVzdF9wYWNrYWdlX2V4cG9ydHNfcHVibGljX2FwaShzZWxmKToKICAgICAgICAiIiLljIXmoLnlr7zlh7rnmoTlkI3lrZfpg73lupTnnJ/lrp7lrZjlnKjjgIIiIiIKICAgICAgICBmb3IgbmFtZSBpbiB1Z3JlZW4uX19hbGxfXzoKICAgICAgICAgICAgc2VsZi5hc3NlcnRUcnVlKGhhc2F0dHIodWdyZWVuLCBuYW1lKSwKICAgICAgICAgICAgICAgICAgICAgICAgICAgIGYiX19hbGxfXyDph4znmoQge25hbWV9IOS4jeWtmOWcqCIpCgoKY2xhc3MgU2luZ2xlRmlsZUJ1aWxkVGVzdCh1bml0dGVzdC5UZXN0Q2FzZSk6CiAgICAiIiLljZXmlofku7bkuqfnianlv4XpobvkuI7ljIXkv53mjIHlkIzmraXjgIIiIiIKCiAgICBkZWYgdGVzdF9zaW5nbGVfZmlsZV9leGlzdHMoc2VsZik6CiAgICAgICAgc2VsZi5hc3NlcnRUcnVlKFNJTkdMRS5leGlzdHMoKSwgIue8uuWwkeWNleaWh+S7tuS6p+eJqSIpCgogICAgZGVmIHRlc3Rfc2luZ2xlX2ZpbGVfaXNfdXBfdG9fZGF0ZShzZWxmKToKICAgICAgICAiIiLmlLnkuoYgc3JjL3VncmVlbi8g5Y205b+Y5LqG6YeN5paw5p6E5bu6IOKAlOKAlCDov5nmmK/mnIDlrrnmmJPooqvmvI/mjonnmoTlnZHjgIIiIiIKICAgICAgICByID0gc3VicHJvY2Vzcy5ydW4oCiAgICAgICAgICAgIFtzeXMuZXhlY3V0YWJsZSwgc3RyKFJPT1QgLyAidG9vbHMiIC8gImJ1aWxkX3NpbmdsZS5weSIpLCAiLS1jaGVjayJdLAogICAgICAgICAgICBjYXB0dXJlX291dHB1dD1UcnVlLCB0ZXh0PVRydWUsIGN3ZD1zdHIoUk9PVCkpCiAgICAgICAgc2VsZi5hc3NlcnRFcXVhbChyLnJldHVybmNvZGUsIDAsCiAgICAgICAgICAgICAgICAgICAgICAgICBmIuWNleaWh+S7tuW3sui/h+acn++8jOivt+i/kOihjCBweXRob24gdG9vbHMvYnVpbGRfc2luZ2xlLnB5XG4iCiAgICAgICAgICAgICAgICAgICAgICAgICBmIntyLnN0ZG91dH17ci5zdGRlcnJ9IikKCiAgICBkZWYgdGVzdF9zaW5nbGVfZmlsZV9pbXBvcnRhYmxlKHNlbGYpOgogICAgICAgIG1vZCA9IGltcG9ydGxpYi5pbXBvcnRfbW9kdWxlKCJ1Z3JlZW5fYWlfcmVwbHkiKQogICAgICAgIHNlbGYuYXNzZXJ0VHJ1ZShjYWxsYWJsZShtb2QubWFpbikpCiAgICAgICAgc2VsZi5hc3NlcnRUcnVlKGhhc2F0dHIobW9kLCAiVGhyZWFkIikpCiAgICAgICAgc2VsZi5hc3NlcnRUcnVlKGhhc2F0dHIobW9kLCAiQ29uZmlnIikpCgogICAgZGVmIHRlc3Rfc2luZ2xlX2FuZF9wYWNrYWdlX2JlaGF2ZV9zYW1lKHNlbGYpOgogICAgICAgICIiIuWQjOS4gOi+k+WFpeS4i++8jOWNleaWh+S7tuS4juWMheeahOWFs+mUruWHveaVsOi+k+WHuuW/hemhu+S4gOiHtOOAgiIiIgogICAgICAgIHNpbmdsZSA9IGltcG9ydGxpYi5pbXBvcnRfbW9kdWxlKCJ1Z3JlZW5fYWlfcmVwbHkiKQogICAgICAgIGNhc2VzID0gWwogICAgICAgICAgICAoInBhcnNlX2d1aWRlX3RpbWUiLCAoIjIwMjYtMTEtMTcgMTQ6MzAiLCksIHt9KSwKICAgICAgICAgICAgKCJ0aWRfZnJvbV91cmwiLCAoImZvcnVtLnBocD9tb2Q9dmlld3RocmVhZCZ0aWQ9NzM0MiIsKSwge30pLAogICAgICAgICAgICAoImNsZWFuX3RleHQiLCAoIiAgQSZuYnNwOzxiPkI8L2I+ICAiLCksIHt9KSwKICAgICAgICAgICAgKCJleHRyYWN0X3RpdGxlX3Rva2VuIiwgKCLjgJDoh6rojZDjgJHmiJHnmoROQVPlt6XlhbciLCksIHt9KSwKICAgICAgICBdCiAgICAgICAgZm9yIG5hbWUsIGFyZ3MsIGt3YXJncyBpbiBjYXNlczoKICAgICAgICAgICAgd2l0aCBzZWxmLnN1YlRlc3QobmFtZT1uYW1lKToKICAgICAgICAgICAgICAgIHNlbGYuYXNzZXJ0RXF1YWwoCiAgICAgICAgICAgICAgICAgICAgZ2V0YXR0cihzaW5nbGUsIG5hbWUpKCphcmdzLCAqKmt3YXJncyksCiAgICAgICAgICAgICAgICAgICAgZ2V0YXR0cih1Z3JlZW4sIG5hbWUpKCphcmdzLCAqKmt3YXJncykpCgogICAgZGVmIHRlc3Rfc2luZ2xlX2ZpbGVfaGFzX25vX3JlbGF0aXZlX2ltcG9ydHMoc2VsZik6CiAgICAgICAgIiIi5Y2V5paH5Lu25LiN6IO95q6L55WZ55u45a+55a+85YWl77yM5ZCm5YiZ6ISx56a755uu5b2V5bCx5bSp44CCIiIiCiAgICAgICAgc3JjID0gU0lOR0xFLnJlYWRfdGV4dChlbmNvZGluZz0idXRmLTgiKQogICAgICAgIHNlbGYuYXNzZXJ0Tm90SW4oImZyb20gLiIsIHNyYykKICAgICAgICBzZWxmLmFzc2VydE5vdEluKCJmcm9tIC4uIiwgc3JjKQogICAgICAgIHNlbGYuYXNzZXJ0Tm90SW4oImltcG9ydCB1Z3JlZW4uIiwgc3JjKQoKCmNsYXNzIERlcGVuZGVuY3lEZWNsYXJhdGlvblRlc3QodW5pdHRlc3QuVGVzdENhc2UpOgogICAgIiIicmVxdWlyZW1lbnRzLnR4dCDkuI4gcHlwcm9qZWN0LnRvbWwg55qE5L6d6LWW5b+F6aG75LiA6Ie044CCCgogICAg5Lik5aSE5piv5omL5bel57u05oqk55qE77yI5L6d6LWW5Y+q5pyJ5LiA5Liq5qih5Z2X77yM5LiN5aSq5YC85b6X5LiK6Ieq5Yqo55Sf5oiQ77yJ77yMCiAgICDmiYDku6XnlKjmtYvor5XlrojkvY/vvIzpmLLmraLku6XlkI7liqDkuobkvp3otZblj6rmlLnkuIDlpITjgIIKICAgICIiIgoKICAgIGRlZiBfcmVxdWlyZW1lbnRzKHNlbGYpIC0+IGRpY3Rbc3RyLCBzdHJdOgogICAgICAgIG91dCA9IHt9CiAgICAgICAgZm9yIGxpbmUgaW4gKFJPT1QgLyAicmVxdWlyZW1lbnRzLnR4dCIpLnJlYWRfdGV4dCgKICAgICAgICAgICAgICAgIGVuY29kaW5nPSJ1dGYtOCIpLnNwbGl0bGluZXMoKToKICAgICAgICAgICAgbGluZSA9IGxpbmUuc3RyaXAoKQogICAgICAgICAgICBpZiBub3QgbGluZSBvciBsaW5lLnN0YXJ0c3dpdGgoIiMiKToKICAgICAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgICAgIG5hbWUgPSByZS5zcGxpdChyIls+PD0hflxbXSIsIGxpbmUpWzBdLnN0cmlwKCkKICAgICAgICAgICAgb3V0W25hbWVdID0gbGluZQogICAgICAgIHJldHVybiBvdXQKCiAgICBkZWYgX3B5cHJvamVjdChzZWxmKSAtPiBkaWN0W3N0ciwgc3RyXToKICAgICAgICBkYXRhID0gbG9hZF90b21sKFJPT1QgLyAicHlwcm9qZWN0LnRvbWwiKQogICAgICAgIG91dCA9IHt9CiAgICAgICAgZm9yIHNwZWMgaW4gZGF0YVsicHJvamVjdCJdWyJkZXBlbmRlbmNpZXMiXToKICAgICAgICAgICAgbmFtZSA9IHJlLnNwbGl0KHIiWz48PSF+XFtdIiwgc3BlYylbMF0uc3RyaXAoKQogICAgICAgICAgICBvdXRbbmFtZV0gPSBzcGVjCiAgICAgICAgcmV0dXJuIG91dAoKICAgIGRlZiB0ZXN0X3JlcXVpcmVtZW50c19hbmRfcHlwcm9qZWN0X2FncmVlKHNlbGYpOgogICAgICAgIHJlcSA9IHNlbGYuX3JlcXVpcmVtZW50cygpCiAgICAgICAgcHkgPSBzZWxmLl9weXByb2plY3QoKQogICAgICAgIHNlbGYuYXNzZXJ0RXF1YWwoc2V0KHJlcSksIHNldChweSksCiAgICAgICAgICAgICAgICAgICAgICAgICBmIuS+nei1luS4jeS4gOiHtO+8mnJlcXVpcmVtZW50cy50eHQ9e3NvcnRlZChyZXEpfSAiCiAgICAgICAgICAgICAgICAgICAgICAgICBmInB5cHJvamVjdC50b21sPXtzb3J0ZWQocHkpfSIpCgogICAgZGVmIHRlc3RfdmVyc2lvbl9zcGVjc19hZ3JlZShzZWxmKToKICAgICAgICAiIiLniYjmnKznuqbmnZ/kuZ/opoHkuIDoh7TvvIzkuI3og73kuIDkuKogPj0yLjI4IOWPpuS4gOS4qiA+PTIuMjXjgIIiIiIKICAgICAgICByZXEgPSBzZWxmLl9yZXF1aXJlbWVudHMoKQogICAgICAgIHB5ID0gc2VsZi5fcHlwcm9qZWN0KCkKICAgICAgICBmb3IgbmFtZSwgc3BlYyBpbiByZXEuaXRlbXMoKToKICAgICAgICAgICAgc2VsZi5hc3NlcnRFcXVhbChzcGVjLCBweS5nZXQobmFtZSksCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZiJ7bmFtZX0g55qE54mI5pys57qm5p2f5LiN5LiA6Ie077yaIgogICAgICAgICAgICAgICAgICAgICAgICAgICAgIGYie3NwZWN9IHZzIHtweS5nZXQobmFtZSl9IikKCiAgICBkZWYgdGVzdF9weXByb2plY3RfZGVjbGFyZXNfc3JjX2xheW91dChzZWxmKToKICAgICAgICAiIiJzcmMg5biD5bGA5b+F6aG75ZyoIHB5cHJvamVjdCDph4zlo7DmmI7vvIzlkKbliJnoo4Xlh7rmnaXnmoTljIXmmK/nqbrnmoTjgIIiIiIKICAgICAgICBkYXRhID0gbG9hZF90b21sKFJPT1QgLyAicHlwcm9qZWN0LnRvbWwiKQogICAgICAgIHNlbGYuYXNzZXJ0RXF1YWwoZGF0YVsidG9vbCJdWyJzZXR1cHRvb2xzIl1bInBhY2thZ2UtZGlyIl0sIHsiIjogInNyYyJ9KQogICAgICAgIHNlbGYuYXNzZXJ0RXF1YWwoZGF0YVsidG9vbCJdWyJzZXR1cHRvb2xzIl1bInBhY2thZ2VzIl1bImZpbmQiXVsid2hlcmUiXSwKICAgICAgICAgICAgICAgICAgICAgICAgIFsic3JjIl0pCgoKY2xhc3MgTW9kdWxlUmVzcG9uc2liaWxpdHlUZXN0KHVuaXR0ZXN0LlRlc3RDYXNlKToKICAgICIiIuWQhOaooeWdl+iBjOi0o+i+ueeVjOOAgiIiIgoKICAgIGRlZiB0ZXN0X2NvbnN0YW50c19ob2xkc19wcm9tcHQoc2VsZik6CiAgICAgICAgZnJvbSB1Z3JlZW4uY29yZSBpbXBvcnQgY29uc3RhbnRzCiAgICAgICAgc2VsZi5hc3NlcnRJbigi57u/6IGUIiwgY29uc3RhbnRzLlNZU1RFTV9QUk9NUFQpCiAgICAgICAgc2VsZi5hc3NlcnRFcXVhbChjb25zdGFudHMuREVGQVVMVF9GT1JVTVNbMTBdLCAi5Yqf6IO96K6o6K66IikKCiAgICBkZWYgdGVzdF9zdGF0ZV9ob2xkc19xdW90YShzZWxmKToKICAgICAgICBmcm9tIHVncmVlbi5mb3J1bSBpbXBvcnQgc3RhdGUKICAgICAgICBzZWxmLmFzc2VydEVxdWFsKHN0YXRlLkRBSUxZX0tFRVBfREFZUywgMzApCgogICAgZGVmIHRlc3RfZGVwc19leHBvc2VzX3BhcnNlcihzZWxmKToKICAgICAgICBmcm9tIHVncmVlbi5jb3JlIGltcG9ydCBkZXBzCiAgICAgICAgc2VsZi5hc3NlcnRJbihkZXBzLkhUTUxfUEFSU0VSLCAoImx4bWwiLCAiaHRtbC5wYXJzZXIiKSkKCiAgICBkZWYgdGVzdF91dGlsX3BhY2thZ2Vfc3BsaXRzX2J5X2NvbmNlcm4oc2VsZik6CiAgICAgICAgIiIidXRpbCDmjInogYzotKPmi4bmiJAgZW52IC8gdGV4dCAvIHRpbWV1dGlsIC8gYWl1dGls44CCIiIiCiAgICAgICAgZnJvbSB1Z3JlZW4udXRpbCBpbXBvcnQgYWl1dGlsLCBlbnZ1dGlsLCB0ZXh0dXRpbCwgdGltZXV0aWwKICAgICAgICBzZWxmLmFzc2VydFRydWUoY2FsbGFibGUoZW52dXRpbC5sb2cpKQogICAgICAgIHNlbGYuYXNzZXJ0VHJ1ZShjYWxsYWJsZSh0ZXh0dXRpbC5jbGVhbl90ZXh0KSkKICAgICAgICBzZWxmLmFzc2VydFRydWUoY2FsbGFibGUodGltZXV0aWwucGFyc2VfcnNzX2RhdGUpKQogICAgICAgIHNlbGYuYXNzZXJ0VHJ1ZShjYWxsYWJsZShhaXV0aWwubm9ybWFsaXplX2FpX2Jhc2UpKQoKICAgIGRlZiB0ZXN0X2NvbmZpZ19yZWFkc19lbnYoc2VsZik6CiAgICAgICAgaW1wb3J0IG9zCiAgICAgICAgZnJvbSB1bml0dGVzdC5tb2NrIGltcG9ydCBwYXRjaAogICAgICAgIGZyb20gdWdyZWVuLmNvcmUgaW1wb3J0IENvbmZpZwogICAgICAgIHdpdGggcGF0Y2guZGljdChvcy5lbnZpcm9uLCB7IlVHUkVFTl9EQUlMWV9RVU9UQSI6ICI3In0sIGNsZWFyPVRydWUpOgogICAgICAgICAgICBjZmcgPSBDb25maWcuZnJvbV9lbnYodWdyZWVuLmJ1aWxkX3BhcnNlcigpLnBhcnNlX2FyZ3MoW10pKQogICAgICAgIHNlbGYuYXNzZXJ0RXF1YWwoY2ZnLmRhaWx5X3F1b3RhLCA3KQoKCmlmIF9fbmFtZV9fID09ICJfX21haW5fXyI6CiAgICB1bml0dGVzdC5tYWluKHZlcmJvc2l0eT0yKQo=
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""包结构测试：模块边界、依赖方向、单文件构建产物一致性。
+
+与 test_core.py 互补：那个测「行为对不对」，这个测「工程结构对不对」。
+"""
+
+import ast
+import importlib
+import re
+import subprocess
+import sys
+import unittest
+from pathlib import Path
+
+try:  # Python 3.11+
+    import tomllib
+except ImportError:  # pragma: no cover - Python 3.9 / 3.10
+    tomllib = None
+
+
+def load_toml(path: Path) -> dict:
+    """读 pyproject.toml。3.11+ 用标准库 tomllib，低版本用最小正则解析。
+
+    只解析这个测试需要的字段（dependencies 数组 + tool.setuptools 段），
+    不引第三方 tomli 依赖 —— CI 要覆盖 3.9。
+    """
+    if tomllib is not None:
+        return tomllib.loads(path.read_text(encoding="utf-8"))
+
+    src = path.read_text(encoding="utf-8")
+    out: dict = {"project": {}, "tool": {"setuptools": {}}}
+
+    m = re.search(r"^dependencies\s*=\s*\[(.*?)\]", src, re.S | re.M)
+    if m:
+        out["project"]["dependencies"] = re.findall(
+            r'"([^"]+)"', m.group(1))
+
+    m = re.search(r'package-dir\s*=\s*\{\s*""\s*=\s*"([^"]+)"\s*\}', src)
+    if m:
+        out["tool"]["setuptools"]["package-dir"] = {"": m.group(1)}
+
+    m = re.search(r"where\s*=\s*\[([^\]]*)\]", src)
+    if m:
+        out["tool"]["setuptools"].setdefault("packages", {})["find"] = {
+            "where": re.findall(r'"([^"]+)"', m.group(1))}
+
+    return out
+
+ROOT = Path(__file__).resolve().parents[1]
+# src 布局：包在 src/ 下，测试直接从源码树导入（等价于 pip install -e .）
+sys.path.insert(0, str(ROOT / "src"))
+
+import ugreen  # noqa: E402
+
+PKG = ROOT / "src" / "ugreen"
+SINGLE = ROOT / "ugreen_ai_reply.py"
+
+# 子包 -> 该子包下的模块
+SUBPACKAGES = {
+    "core": ["constants", "models", "config", "deps"],
+    "util": ["envutil", "textutil", "timeutil", "aiutil"],
+    "forum": ["client", "classify", "state", "revisit"],
+    "search": ["providers"],
+    "ai": ["client", "quality"],
+    "runtime": ["cli", "notify", "report"],
+}
+
+# 依赖方向：左边不得 import 右边（避免循环依赖与分层倒置）
+LAYER_ORDER = [
+    "core.deps",
+    "core.constants",
+    "util.envutil",
+    "util.textutil",
+    "util.timeutil",
+    "util.aiutil",
+    "core.models",
+    "forum.classify",
+    "core.config",
+    "forum.client",
+    "search.providers",
+    "ai.quality",
+    "ai.client",
+    "forum.revisit",
+    "forum.state",
+    "runtime.notify",
+    "runtime.report",
+    "runtime.cli",
+]
+
+
+def module_files() -> list[Path]:
+    return sorted(p for p in PKG.rglob("*.py")
+                  if p.name != "__init__.py")
+
+
+def module_id(path: Path) -> str:
+    """src/ugreen/forum/client.py -> forum.client"""
+    rel = path.relative_to(PKG).with_suffix("")
+    return ".".join(rel.parts)
+
+
+def parse(path: Path) -> ast.Module:
+    return ast.parse(path.read_text(encoding="utf-8"))
+
+
+def import_targets(path: Path) -> set[str]:
+    """该模块导入的兄弟模块 id（包内相对导入解析成点分路径）。"""
+    out: set[str] = set()
+    pkg_parts = path.relative_to(PKG).parts[:-1]
+    for node in ast.walk(parse(path)):
+        if not isinstance(node, ast.ImportFrom) or not node.module:
+            continue
+        if node.level == 0:
+            continue  # 绝对导入（标准库/三方）
+        base = list(pkg_parts)
+        # level=1 表示当前包，level=2 表示上一级
+        if node.level > 1:
+            base = base[:len(base) - (node.level - 1)]
+        if node.module:
+            base = base + node.module.split(".")
+        else:
+            base = base + [a.name for a in node.names][:1]
+        # from . import x  -> x 是子模块
+        if not node.module:
+            for a in node.names:
+                out.add(".".join(base + [a.name]))
+            continue
+        out.add(".".join(base))
+    return out
+
+
+class PackageLayoutTest(unittest.TestCase):
+    """包结构基本形状。"""
+
+    def test_subpackages_exist(self):
+        for pkg, mods in SUBPACKAGES.items():
+            self.assertTrue((PKG / pkg / "__init__.py").exists(),
+                            f"缺少子包 {pkg}/__init__.py")
+            for mod in mods:
+                self.assertTrue((PKG / pkg / f"{mod}.py").exists(),
+                                f"缺少模块 {pkg}/{mod}.py")
+
+    def test_has_init_and_main(self):
+        self.assertTrue((PKG / "__init__.py").exists())
+        self.assertTrue((PKG / "__main__.py").exists())
+
+    def test_no_duplicate_top_level_names(self):
+        """模块之间不能有同名顶层符号，否则内联成单文件会互相覆盖。"""
+        seen: dict[str, str] = {}
+        dupes = []
+        for p in module_files():
+            for node in parse(p).body:
+                names = []
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                     ast.ClassDef)):
+                    names = [node.name]
+                elif isinstance(node, ast.Assign):
+                    names = [t.id for t in node.targets
+                             if isinstance(t, ast.Name)]
+                elif isinstance(node, ast.AnnAssign) and isinstance(
+                        node.target, ast.Name):
+                    names = [node.target.id]
+                for n in names:
+                    if n in seen and seen[n] != module_id(p):
+                        dupes.append(f"{n}（{seen[n]} 与 {module_id(p)}）")
+                    seen[n] = module_id(p)
+        self.assertEqual(dupes, [], f"跨模块重名：{dupes}")
+
+    def test_dependency_direction(self):
+        """上层可以依赖下层，下层不得依赖上层。"""
+        idx = {name: i for i, name in enumerate(LAYER_ORDER)}
+        violations = []
+        for p in module_files():
+            mid = module_id(p)
+            if mid not in idx:
+                continue
+            for dep in import_targets(p):
+                if dep in idx and idx[dep] > idx[mid]:
+                    violations.append(f"{mid} -> {dep}")
+        self.assertEqual(violations, [],
+                         f"存在反向依赖（会形成循环）：{violations}")
+
+    def test_no_module_imports_package_root(self):
+        """子模块不能 from . import xxx，否则会触发循环导入。"""
+        bad = []
+        for p in module_files():
+            for node in ast.walk(parse(p)):
+                if (isinstance(node, ast.ImportFrom) and node.level == 1
+                        and node.module is None):
+                    bad.append(module_id(p))
+        self.assertEqual(bad, [], "子模块不应从包根导入")
+
+    def test_package_exports_public_api(self):
+        """包根导出的名字都应真实存在。"""
+        for name in ugreen.__all__:
+            self.assertTrue(hasattr(ugreen, name),
+                            f"__all__ 里的 {name} 不存在")
+
+
+class SingleFileBuildTest(unittest.TestCase):
+    """单文件产物必须与包保持同步。"""
+
+    def test_single_file_exists(self):
+        self.assertTrue(SINGLE.exists(), "缺少单文件产物")
+
+    def test_single_file_is_up_to_date(self):
+        """改了 src/ugreen/ 却忘了重新构建 —— 这是最容易被漏掉的坑。"""
+        r = subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "build_single.py"), "--check"],
+            capture_output=True, text=True, cwd=str(ROOT))
+        self.assertEqual(r.returncode, 0,
+                         f"单文件已过期，请运行 python tools/build_single.py\n"
+                         f"{r.stdout}{r.stderr}")
+
+    def test_single_file_importable(self):
+        mod = importlib.import_module("ugreen_ai_reply")
+        self.assertTrue(callable(mod.main))
+        self.assertTrue(hasattr(mod, "Thread"))
+        self.assertTrue(hasattr(mod, "Config"))
+
+    def test_single_and_package_behave_same(self):
+        """同一输入下，单文件与包的关键函数输出必须一致。"""
+        single = importlib.import_module("ugreen_ai_reply")
+        cases = [
+            ("parse_guide_time", ("2026-11-17 14:30",), {}),
+            ("tid_from_url", ("forum.php?mod=viewthread&tid=7342",), {}),
+            ("clean_text", ("  A&nbsp;<b>B</b>  ",), {}),
+            ("extract_title_token", ("【自荐】我的NAS工具",), {}),
+        ]
+        for name, args, kwargs in cases:
+            with self.subTest(name=name):
+                self.assertEqual(
+                    getattr(single, name)(*args, **kwargs),
+                    getattr(ugreen, name)(*args, **kwargs))
+
+    def test_single_file_has_no_relative_imports(self):
+        """单文件不能残留相对导入，否则脱离目录就崩。"""
+        src = SINGLE.read_text(encoding="utf-8")
+        self.assertNotIn("from .", src)
+        self.assertNotIn("from ..", src)
+        self.assertNotIn("import ugreen.", src)
+
+
+class DependencyDeclarationTest(unittest.TestCase):
+    """requirements.txt 与 pyproject.toml 的依赖必须一致。
+
+    两处是手工维护的（依赖只有一个模块，不太值得上自动生成），
+    所以用测试守住，防止以后加了依赖只改一处。
+    """
+
+    def _requirements(self) -> dict[str, str]:
+        out = {}
+        for line in (ROOT / "requirements.txt").read_text(
+                encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            name = re.split(r"[><=!~\[]", line)[0].strip()
+            out[name] = line
+        return out
+
+    def _pyproject(self) -> dict[str, str]:
+        data = load_toml(ROOT / "pyproject.toml")
+        out = {}
+        for spec in data["project"]["dependencies"]:
+            name = re.split(r"[><=!~\[]", spec)[0].strip()
+            out[name] = spec
+        return out
+
+    def test_requirements_and_pyproject_agree(self):
+        req = self._requirements()
+        py = self._pyproject()
+        self.assertEqual(set(req), set(py),
+                         f"依赖不一致：requirements.txt={sorted(req)} "
+                         f"pyproject.toml={sorted(py)}")
+
+    def test_version_specs_agree(self):
+        """版本约束也要一致，不能一个 >=2.28 另一个 >=2.25。"""
+        req = self._requirements()
+        py = self._pyproject()
+        for name, spec in req.items():
+            self.assertEqual(spec, py.get(name),
+                             f"{name} 的版本约束不一致："
+                             f"{spec} vs {py.get(name)}")
+
+    def test_pyproject_declares_src_layout(self):
+        """src 布局必须在 pyproject 里声明，否则装出来的包是空的。"""
+        data = load_toml(ROOT / "pyproject.toml")
+        self.assertEqual(data["tool"]["setuptools"]["package-dir"], {"": "src"})
+        self.assertEqual(data["tool"]["setuptools"]["packages"]["find"]["where"],
+                         ["src"])
+
+
+class ModuleResponsibilityTest(unittest.TestCase):
+    """各模块职责边界。"""
+
+    def test_constants_holds_prompt(self):
+        from ugreen.core import constants
+        self.assertIn("绿联", constants.SYSTEM_PROMPT)
+        self.assertEqual(constants.DEFAULT_FORUMS[10], "功能讨论")
+
+    def test_state_holds_quota(self):
+        from ugreen.forum import state
+        self.assertEqual(state.DAILY_KEEP_DAYS, 30)
+
+    def test_deps_exposes_parser(self):
+        from ugreen.core import deps
+        self.assertIn(deps.HTML_PARSER, ("lxml", "html.parser"))
+
+    def test_util_package_splits_by_concern(self):
+        """util 按职责拆成 env / text / timeutil / aiutil。"""
+        from ugreen.util import aiutil, envutil, textutil, timeutil
+        self.assertTrue(callable(envutil.log))
+        self.assertTrue(callable(textutil.clean_text))
+        self.assertTrue(callable(timeutil.parse_rss_date))
+        self.assertTrue(callable(aiutil.normalize_ai_base))
+
+    def test_config_reads_env(self):
+        import os
+        from unittest.mock import patch
+        from ugreen.core import Config
+        with patch.dict(os.environ, {"UGREEN_DAILY_QUOTA": "7"}, clear=True):
+            cfg = Config.from_env(ugreen.build_parser().parse_args([]))
+        self.assertEqual(cfg.daily_quota, 7)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
