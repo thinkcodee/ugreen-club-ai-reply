@@ -167,13 +167,14 @@ https://api.deepseek.com/v1/chat/completions      → 去掉尾部再拼，不�
 | `AI_AUTH_SCHEME` | `Bearer` | **置空**则直接把 Key 作为该头的值（不拼 Bearer） |
 | `AI_TIMEOUT` | `120` | 模型请求超时（秒） |
 | `AI_TEMPERATURE` | `0.6` | 采样温度，限制在 0~2 |
-| `AI_MAX_TOKENS` | `4096` | 单次最大输出 token。思考型模型容易被思考过程吃光，建议不低于 4096 |
+| `AI_MAX_TOKENS` | `131072` | 单次最大输出 token（128K）。**设 `0` = 不限制**（请求体里不带该字段，由服务端按模型上限决定）；服务端嫌太大返回 400 时会自动去掉该字段并重试 |
+| `AI_MAX_TOKENS_CAP` | `1048576` | 输出被截断时自适应放宽的天花板（1M）；设 `0` = 不设顶 |
 | `AI_TOP_P` | 不传 | 设了才加入请求体 |
 | `AI_BATCH_SIZE` | `5` | 每批送几篇给模型 |
 | `AI_RETRIES` | `3` | 失败/JSON 解析失败重试次数（1~6） |
 | `AI_JSON_MODE` | `1` | 请求 `response_format=json_object`；端点返回 400 不支持时自动去掉并重试 |
 | `AI_BATCH_FALLBACK` | `1` | 整批解析失败时对缺失的帖子逐篇重试，避免一批帖子被静默丢掉 |
-| `AI_DISABLE_THINKING` | `0` | 设 `1` 则请求带 `enable_thinking=false`，适合 Xing / Qwen3 等思考型模型 |
+| `AI_DISABLE_THINKING` | 自动 | 设 `1`/`0` 强制开关；**不设时按模型名自动判断**：Xing / Qwen3 / R1 等思考型模型默认带上 `enable_thinking=false`，避免 token 全被思考过程吃掉 |
 | `AI_ENABLED` | `1` | `0` 关闭 AI；实发模式下会拒绝发帖（防止用模板灌水） |
 | `AI_EXTRA_BODY` | `{}` | JSON 对象，追加厂商私有参数或覆盖任一请求字段 |
 | `AI_EXTRA_HEADERS` | `{}` | JSON 对象或 `K: V; K2: V2`，用于 OpenRouter 等需要额外头的平台 |
@@ -235,6 +236,7 @@ python ugreen_ai_reply.py --test-ai
 | `UGREEN_MAX_CASUAL` | `1` | 每次运行最多几条水帖回复，防止刷屏 |
 | `UGREEN_ALLOW_MEDIA` | `1` | 是否允许附带论坛表情 / 图片代码 |
 | `UGREEN_MEDIA_CODES` | `[赞],[图片],[示意图],[加油],[鼓掌],[哈哈],[谢谢],[握手]` | **白名单**：模型只能填这里面的代码，其它一律丢弃，绝不允许自由塞图片链接 |
+| `UGREEN_LOG_TITLE_CHARS` | `0` | 日志里「最新：xxx」那行的标题显示长度；`0` = 完整显示，截断时带 `…` |
 
 **重访的判定逻辑**：已回复过的帖子默认不再回复。只有命中下面任一触发条件才会重新进入模型判断，并且新回复若与上次内容高度相似会被本地硬闸拦掉：
 
@@ -440,6 +442,17 @@ Discuz 模板不同，成功文案可能变化。设 `UGREEN_DEBUG=1` 看响应�
 失败时日志会打印 `finish_reason`、正文长度和**原始返回片段**，照着看就能定位。若你的模型支持关思考，建议直接设 `AI_DISABLE_THINKING=1`；端点不认这个参数时脚本会自动去掉并继续。整批失败后还会对缺失的帖子逐篇重试（`AI_BATCH_FALLBACK=1`），不会再整批丢掉。
 
 老版本如果连 `response_format` 都不支持，设 `AI_JSON_MODE=0`。
+
+**Q：`max_tokens` 到底能给多大？会不会把正文挤没？**
+现在的模型动辄 128K~1M，所以：
+
+- 默认 `AI_MAX_TOKENS=131072`（128K），`AI_MAX_TOKENS_CAP=1048576`（1M）是自适应放宽的天花板；
+- **`AI_MAX_TOKENS=0` 表示完全不限制** —— 请求体里干脆不带 `max_tokens` 字段，由服务端按模型自身上限决定；
+- 万一服务端嫌这个数太大返回 400，脚本会自动去掉该字段并重试（并把后续批次也切成不限制）；
+- 若日志里 `finish_reason=length` 且原始片段是英文长篇分析（如 "Let me analyze each post one by one"），说明那是**思考过程**不是正文。脚本已按模型名自动关思考（Xing / Qwen3 / R1 等），你也可以用 `AI_DISABLE_THINKING=1` 强制；单纯调大 `max_tokens` 只会让它思考得更久。
+
+**Q：日志里「最新：xxx」的标题被截断了吗？**
+帖子标题本身一直是完整的，截断只发生在**日志展示层**。现在默认**完整显示**；确实嫌长可设 `UGREEN_LOG_TITLE_CHARS=40`，截断处会带 `…`，一眼能看出是显示层截断而不是标题就这么短。
 
 **Q：表情回复被论坛拒了？**
 部分 Discuz 配置会限制过短内容，响应里出现"内容太短"时脚本会如实记为失败（这比原脚本误报成功要好）。可让模型给"表情 + 一句话"而非纯表情，或设 `UGREEN_ALLOW_EMOJI_REPLY=0` 只用文字回复。

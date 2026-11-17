@@ -336,10 +336,17 @@ AI_PROVIDER_PRESETS: dict[str, tuple[str, str]] = {
     "custom": ("", ""),
 }
 
+# 思考型模型：默认把 token 花在 reasoning 上，正文 JSON 反而写不完。
+# 这些模型默认带上 enable_thinking=false，除非用户显式用 AI_DISABLE_THINKING=0 打开。
+THINKING_MODEL_HINTS = ("xing", "qwen3", "qwq", "-r1", "reasoner", "thinking",
+                         "deepseek-v3.1", "deepseek-v3.2", "hunyuan-a13b",
+                         "step-", "glm-4.6", "kimi-k2-thinking")
+
 AI_BASE_ALIASES = (
     "AI_BASE_URL", "UGREEN_AI_BASE_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE",
     "LLM_BASE_URL", "AI_API_BASE", "SILICONFLOW_BASE_URL", "DEEPSEEK_BASE_URL",
 )
+
 AI_KEY_ALIASES = (
     "AI_API_KEY", "UGREEN_AI_API_KEY", "OPENAI_API_KEY", "LLM_API_KEY",
     "AI_TOKEN", "SILICONFLOW_API_KEY", "SF_API_KEY", "DEEPSEEK_API_KEY",
@@ -404,6 +411,19 @@ def clean_text(s: str) -> str:
                  ("&lt;", "<"), ("&gt;", ">"), ("&#39;", "'"), ("&#215;", "x")):
         s = s.replace(a, b)
     return re.sub(r"\s+", " ", s).strip()
+
+
+def clip_text(s: str, limit: int) -> str:
+    """把文本压到 limit 个字符以内，超长时用 … 收尾。
+
+    之前日志里的标题是直接 title[:22] 硬切，看起来像「帖子标题就这么长」，
+    容易误判；加上省略号后一眼就能看出是显示层截断。
+    limit <= 0 表示不限制。
+    """
+    s = (s or "").strip()
+    if limit <= 0 or len(s) <= limit:
+        return s
+    return s[:max(1, limit - 1)].rstrip() + "…"
 
 
 def parse_rss_date(text: str) -> Optional[datetime]:
@@ -539,11 +559,13 @@ def is_emoji_reply(s: str) -> bool:
     return len(remainder) <= 6
 
 
-def select_per_forum_latest(threads: list[Thread], limit: int) -> list[Thread]:
+def select_per_forum_latest(threads: list[Thread], limit: int,
+                            title_chars: int = 0) -> list[Thread]:
     """每个板块各自取最新的 limit 篇，避免活跃板块把名额全占满。
 
     RSS 本身按时间倒序返回，但跨板块合并后如果直接截断，会变成「谁最新谁上」。
     这里按 fid 分组后再截取，保证六个板块都有机会进入 AI 判断。
+    title_chars 只影响日志里这一行的展示长度（0 = 完整显示），不影响帖子数据。
     """
     groups: dict[int, list[Thread]] = {}
     for t in threads:
@@ -555,7 +577,7 @@ def select_per_forum_latest(threads: list[Thread], limit: int) -> list[Thread]:
                        reverse=True)
         take = items[:limit]
         log(f"  板块 {DEFAULT_FORUMS.get(fid, fid)} 最新 {len(take)}/{len(items)} 篇"
-            + (f"，最新：{take[0].title[:22]}" if take else ""))
+            + (f"，最新：{clip_text(take[0].title, title_chars)}" if take else ""))
         if take:
             buckets.append(take)
     # 各板块轮流交错，避免回复名额被排序靠前的板块一口气占完
@@ -596,7 +618,8 @@ class Config:
     ai_auth_header: str = "Authorization"
     ai_auth_scheme: str = "Bearer"   # 置空即直接把 Key 作为头的值（如 api-key）
     ai_temperature: float = 0.6
-    ai_max_tokens: int = 4096
+    ai_max_tokens: int = 131072     # 0 = 不限制（请求体里不带 max_tokens 字段）
+    ai_max_tokens_cap: int = 1048576  # 失败自适应放宽时的天花板，0 = 不设顶
     ai_top_p: Optional[float] = None
     ai_timeout: int = 120
     ai_batch: int = 5
@@ -635,6 +658,8 @@ class Config:
     recheck_limit: int = 3
     revisit_hours: float = 168.0
     my_username: str = ""
+    # 日志里「最新：xxx」那行的标题显示长度，0 = 完整显示（默认不截断）
+    log_title_chars: int = 0
     # ---- D：检索层 ----
     search_enabled: bool = True
     # 默认带联网源：未配各自 Key 时它们直接返回空、不发任何请求；
@@ -739,7 +764,13 @@ class Config:
         cfg.ai_auth_header = env_str("AI_AUTH_HEADER") or cfg.ai_auth_header
         cfg.ai_auth_scheme = env_str("AI_AUTH_SCHEME", cfg.ai_auth_scheme)
         cfg.ai_temperature = max(0.0, min(2.0, env_float("AI_TEMPERATURE", 0.6)))
-        cfg.ai_max_tokens = max(64, env_int("AI_MAX_TOKENS", 4096))
+        # AI_MAX_TOKENS=0 表示「不限制」：请求体里干脆不带 max_tokens 字段，
+        # 让服务端按模型自身的最大输出长度处理。
+        # 现在的模型动辄 128K~1M 上下文，所以下限给到 128K，避免思考过程把正文挤掉；
+        # 万一服务端不接受这么大的值，调用层会自动去掉该字段重试。
+        cfg.ai_max_tokens = max(0, env_int("AI_MAX_TOKENS", 131072))
+        # 自适应放宽的天花板；0 = 不设顶（一直往上限外放）。
+        cfg.ai_max_tokens_cap = max(0, env_int("AI_MAX_TOKENS_CAP", 1048576))
         top_p = env_str("AI_TOP_P")
         cfg.ai_top_p = float(top_p) if top_p else None
         cfg.ai_timeout = max(5, env_int("AI_TIMEOUT", 120))
@@ -747,7 +778,15 @@ class Config:
         cfg.ai_json_mode = env_bool("AI_JSON_MODE", True)
         cfg.ai_retries = max(1, min(6, env_int("AI_RETRIES", 3)))
         cfg.ai_batch_fallback = env_bool("AI_BATCH_FALLBACK", True)
-        cfg.ai_disable_thinking = env_bool("AI_DISABLE_THINKING", False)
+        # 思考型模型默认关掉思考：否则 token 全被 reasoning 吃掉，正文 JSON 写不完。
+        # AI_DISABLE_THINKING 显式写了就听用户的。
+        raw_disable = env_str("AI_DISABLE_THINKING")
+        if raw_disable:
+            cfg.ai_disable_thinking = env_bool("AI_DISABLE_THINKING", True)
+        else:
+            low_model = (cfg.ai_model or "").lower()
+            cfg.ai_disable_thinking = any(
+                h in low_model for h in THINKING_MODEL_HINTS)
         cfg.ai_headers = parse_kv_mapping(env_str("AI_EXTRA_HEADERS"),
                                           "AI_EXTRA_HEADERS")
         cfg.ai_extra_body = parse_extra_body(env_str("AI_EXTRA_BODY"))
@@ -789,6 +828,7 @@ class Config:
         cfg.recheck_limit = max(0, env_int("UGREEN_RECHECK_LIMIT", 3))
         cfg.revisit_hours = max(1.0, env_float("UGREEN_REVISIT_HOURS", 168.0))
         cfg.my_username = env_str("UGREEN_MY_USERNAME").lstrip("@")
+        cfg.log_title_chars = max(0, env_int("UGREEN_LOG_TITLE_CHARS", 0))
 
         cfg.search_enabled = env_bool("UGREEN_SEARCH", True)
         cfg.search_providers = parse_search_providers(
@@ -1795,8 +1835,11 @@ def ai_request_body(batch: list[Thread], cfg: Config) -> dict:
                                           ensure_ascii=False, indent=1))},
         ],
         "temperature": cfg.ai_temperature,
-        "max_tokens": cfg.ai_max_tokens,
     }
+    # ai_max_tokens = 0 表示不限制：直接不带 max_tokens 字段，
+    # 由服务端按模型自身的最大输出长度决定。
+    if cfg.ai_max_tokens > 0:
+        body["max_tokens"] = cfg.ai_max_tokens
     if cfg.ai_top_p is not None:
         body["top_p"] = cfg.ai_top_p
     if cfg.ai_json_mode:
@@ -1838,6 +1881,18 @@ def call_ai(batch: list[Thread], cfg: Config) -> Optional[dict]:
                 body.pop("enable_thinking", None)  # 该端点不认这个参数，去掉再试
                 log("  模型接口不认 enable_thinking 参数，已去掉并重试")
                 continue
+            if (r.status_code == 400 and body.get("max_tokens")
+                    and ("max_tokens" in (r.text or "")
+                         or "max tokens" in (r.text or "").lower()
+                         or "maximum context" in (r.text or "").lower())):
+                # 部分模型/网关不接受这么大的 max_tokens（超出模型自身上限），
+                # 直接去掉该字段，让服务端按默认值处理。
+                dropped = body.pop("max_tokens")
+                cfg.ai_max_tokens = 0
+                cfg.ai_max_tokens_cap = 0
+                log(f"  模型接口不接受 max_tokens={dropped}，已去掉该参数并重试"
+                    "（不限制输出长度）")
+                continue
             if r.status_code != 200:
                 log(f"  模型接口 {r.status_code}: {r.text[:200]}")
                 if r.status_code in (401, 403):
@@ -1865,11 +1920,30 @@ def call_ai(batch: list[Thread], cfg: Config) -> Optional[dict]:
                 else:
                     log("    原始返回为空：模型很可能只输出了思考过程，正文没生成")
                 if meta.get("finish_reason") == "length":
-                    old = int(body.get("max_tokens") or cfg.ai_max_tokens)
-                    body["max_tokens"] = min(int(old * 1.6) + 256, 8192)
-                    # 记住这次放宽，后续批次与逐篇重试都沿用
-                    cfg.ai_max_tokens = body["max_tokens"]
-                    log(f"    输出被 max_tokens 截断，下一轮放宽到 {body['max_tokens']}")
+                    # 输出被截断。根因通常不是额度不够，而是思考过程把 token 吃光，
+                    # 所以先关思考（治本），再考虑放宽 max_tokens（治标）。
+                    thinking_already_off = "enable_thinking" in body
+                    if not thinking_already_off:
+                        body["enable_thinking"] = False
+                        # 记住要关思考，后续批次与逐篇重试都沿用
+                        cfg.ai_disable_thinking = True
+                        log("    下一轮关闭思考模式（enable_thinking=false）")
+                    if body.get("max_tokens"):
+                        old = int(body["max_tokens"])
+                        new = int(old * 1.6) + 256
+                        if cfg.ai_max_tokens_cap > 0:
+                            new = min(new, cfg.ai_max_tokens_cap)
+                        body["max_tokens"] = new
+                        # 记住这次放宽，后续批次与逐篇重试都沿用
+                        cfg.ai_max_tokens = new
+                        log(f"    输出被 max_tokens 截断，下一轮放宽到 {new}")
+                    elif thinking_already_off:
+                        # 已经是不限制模式、思考也关掉了还是被截断，
+                        # 说明是服务端自己的输出上限，再试同样大小的批次没意义，
+                        # 交给逐篇重试把批次拆小。
+                        log("    输出仍被截断（未限制 max_tokens 且已关闭思考，"
+                            "疑似服务端输出上限），本批不再重试，改由逐篇重试拆分")
+                        return None
                 if meta.get("reasoning_only") and "enable_thinking" not in body:
                     body["enable_thinking"] = False
                     # 记住要关思考，后续批次与逐篇重试都沿用
@@ -1901,7 +1975,9 @@ def describe_ai_config(cfg: Config) -> str:
         f"{(scheme + ' ') if scheme else ''}****",
         f"  chatPath   : {cfg.ai_chat_path}",
         f"  parameters : temperature={cfg.ai_temperature}, "
-        f"max_tokens={cfg.ai_max_tokens}, top_p={cfg.ai_top_p}, "
+        f"max_tokens={cfg.ai_max_tokens if cfg.ai_max_tokens > 0 else '不限制(不带该字段)'}, "
+        f"放宽上限={cfg.ai_max_tokens_cap or '不设顶'}, "
+        f"top_p={cfg.ai_top_p}, "
         f"retries={cfg.ai_retries}, batch={cfg.ai_batch}, "
         f"timeout={cfg.ai_timeout}s, json_mode={'on' if cfg.ai_json_mode else 'off'}",
         f"  健壮性    : 整批失败逐篇重试="
@@ -2579,8 +2655,8 @@ def render_notify(results: list[dict], cfg: Config) -> str:
         if not r.get("reply") or r.get("skip"):
             continue
         t: Thread = r["thread"]
-        L.append(f"· [{t.forum}] {t.title[:32]}")
-        L.append(f"  {r['reply'][:90]}")
+        L.append(f"· [{t.forum}] {clip_text(t.title, 48)}")
+        L.append(f"  {clip_text(r['reply'], 90)}")
         L.append(f"  {r.get('outcome', '')}")
         L.append(f"  {t.url}")
     return truncate_bytes("\n".join(L), 1900)
@@ -2670,6 +2746,11 @@ def main() -> int:
         log(f"AI 接入：{cfg.ai_model} @ {cfg.ai_base} → {cfg.chat_url}，"
             f"Key={mask_secret(cfg.ai_key)}"
             f"（来自 {cfg.ai_sources.get('apiKey', '自定义认证头')}）")
+        log(f"AI 参数：max_tokens="
+            f"{'不限制（不带该字段）' if cfg.ai_max_tokens <= 0 else cfg.ai_max_tokens}，"
+            f"batch={cfg.ai_batch}，思考模式="
+            f"{'关闭' if cfg.ai_disable_thinking else '开启'}，"
+            f"json_mode={'开' if cfg.ai_json_mode else '关'}")
 
     if not cfg.dry_run:
         if not cfg.cookie:
@@ -2716,7 +2797,8 @@ def main() -> int:
             continue
         fresh.append(t)
     log(f"窗口内候选 {len(fresh)} 篇（过滤掉旧帖 / 制度帖 / 已回复）")
-    fresh = select_per_forum_latest(fresh, cfg.per_forum_limit)
+    fresh = select_per_forum_latest(fresh, cfg.per_forum_limit,
+                                    cfg.log_title_chars)
     log(f"按板块各取最新 {cfg.per_forum_limit} 篇并交错后，共 {len(fresh)} 篇")
 
     # 已回复过的帖子默认不再回复；这里挑出「最近回过、值得回头看看」的候选，

@@ -262,6 +262,31 @@ class PerForumLatestTest(unittest.TestCase):
         self.assertNotEqual(got[0].fid, got[1].fid)
         self.assertEqual([t.fid for t in got[:4]], [10, 14, 10, 14])
 
+    def test_long_title_not_truncated_by_default(self):
+        """日志里的标题默认完整显示，不再被硬切到 22 字。"""
+        long_title = ("【自荐】给绿联NAS请了一个AI管家，从此动动嘴就能玩转NAS"
+                      "，附完整配置说明")
+        pool = [m.Thread(tid="1", title=long_title, fid=10,
+                         published=datetime.now())]
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            m.select_per_forum_latest(pool, 4)
+        out = buf.getvalue()
+        self.assertIn(long_title, out)
+        self.assertNotIn("…", out)
+
+    def test_title_truncation_marks_with_ellipsis(self):
+        """显式限定长度时用省略号收尾，让人看得出是显示层截断。"""
+        long_title = "标" * 40
+        pool = [m.Thread(tid="1", title=long_title, fid=10,
+                         published=datetime.now())]
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            m.select_per_forum_latest(pool, 4, title_chars=20)
+        out = buf.getvalue()
+        self.assertIn("…", out)
+        self.assertIn("标" * 19, out)
+
 
 class AiConfigTest(unittest.TestCase):
     """环境变量：别名、厂商预设、baseURL 规范化、请求参数与脱敏。"""
@@ -392,6 +417,35 @@ class AiConfigTest(unittest.TestCase):
         self.assertEqual(body["top_p"], 0.5)
         self.assertFalse(body["enable_thinking"])
         self.assertIn("用粤语回复", body["messages"][0]["content"])
+
+    def test_max_tokens_zero_means_unlimited(self):
+        """AI_MAX_TOKENS=0 时请求体里干脆不带 max_tokens 字段。"""
+        cfg = self._cfg({"AI_MAX_TOKENS": "0"})
+        self.assertEqual(cfg.ai_max_tokens, 0)
+        body = m.ai_request_body([m.Thread(tid="1", title="t")], cfg)
+        self.assertNotIn("max_tokens", body)
+
+    def test_max_tokens_default_is_128k(self):
+        """默认给到 128K，避免思考过程把正文挤掉。"""
+        cfg = self._cfg({})
+        self.assertEqual(cfg.ai_max_tokens, 131072)
+        self.assertEqual(cfg.ai_max_tokens_cap, 1048576)
+        body = m.ai_request_body([m.Thread(tid="1", title="t")], cfg)
+        self.assertEqual(body["max_tokens"], 131072)
+
+    def test_thinking_model_auto_disables_thinking(self):
+        """思考型模型默认关思考；显式配置时听用户的。"""
+        cfg = self._cfg({"AI_MODEL": "XingChenAGI/Xing4.0-29B"})
+        self.assertTrue(cfg.ai_disable_thinking)
+        body = m.ai_request_body([m.Thread(tid="1", title="t")], cfg)
+        self.assertFalse(body["enable_thinking"])
+
+        cfg2 = self._cfg({"AI_MODEL": "XingChenAGI/Xing4.0-29B",
+                           "AI_DISABLE_THINKING": "0"})
+        self.assertFalse(cfg2.ai_disable_thinking)
+
+        cfg3 = self._cfg({"AI_MODEL": "deepseek-ai/DeepSeek-V3"})
+        self.assertFalse(cfg3.ai_disable_thinking)
 
     def test_enabled_flag_and_mask(self):
         cfg = self._cfg({"AI_ENABLED": "0", "AI_API_KEY": "sk-abcdefghijkl"})
@@ -1414,6 +1468,70 @@ class CallAiRobustTest(unittest.TestCase):
                     if one:
                         decisions.update(one)
         self.assertIn("7000", decisions)
+
+    def test_server_rejecting_max_tokens_falls_back(self):
+        """服务端嫌 max_tokens 太大而 400 时，去掉该字段重试。"""
+        cfg = self._cfg()
+        cfg.ai_max_tokens = 131072
+        ok_body = json.dumps({"results": [
+            {"tid": "7000", "should_reply": True, "kind": "text",
+             "reply": "可以试试", "reason": "有解"}]}, ensure_ascii=False)
+        calls = []
+
+        def fake_post(url, headers=None, json=None, timeout=None):
+            calls.append(dict(json))
+            if len(calls) == 1:
+                return _R({"error": {"message": "max_tokens is too large"}},
+                          code=400)
+            return _R({"choices": [{"finish_reason": "stop", "message": {
+                "content": ok_body}}]})
+
+        with patch.object(m.requests, "post", side_effect=fake_post):
+            got = m.call_ai(self._batch(1), cfg)
+        self.assertIsNotNone(got)
+        self.assertIn("7000", got)
+        self.assertIn("max_tokens", calls[0])
+        self.assertNotIn("max_tokens", calls[1])
+
+    def test_unlimited_truncation_defers_to_per_post_retry(self):
+        """不限制 max_tokens 还被截断时：先试关思考，仍不行才交给逐篇重试拆分。"""
+        cfg = self._cfg()
+        cfg.ai_max_tokens = 0
+        cfg.ai_retries = 3
+        calls = []
+
+        def fake_post(url, headers=None, json=None, timeout=None):
+            calls.append(dict(json))
+            return _R(self._resp("Let me analyze each post one by one.",
+                                  finish_reason="length"))
+
+        with patch.object(m.requests, "post", side_effect=fake_post):
+            got = m.call_ai(self._batch(1), cfg)
+        self.assertIsNone(got)
+        # 请求体里本来就没有 max_tokens
+        self.assertNotIn("max_tokens", calls[0])
+        # 第一轮先关思考重试一次，还不行才放弃本批
+        self.assertGreaterEqual(len(calls), 2)
+        self.assertFalse(calls[1].get("enable_thinking"))
+
+    def test_truncation_widens_max_tokens(self):
+        """被截断时按比例放宽 max_tokens，且不超过配置的天花板。"""
+        cfg = self._cfg()
+        cfg.ai_max_tokens = 4096
+        cfg.ai_max_tokens_cap = 6000
+        cfg.ai_retries = 2
+        calls = []
+
+        def fake_post(url, headers=None, json=None, timeout=None):
+            calls.append(dict(json))
+            return _R(self._resp("Let me analyze each post one by one.",
+                                  finish_reason="length"))
+
+        with patch.object(m.requests, "post", side_effect=fake_post):
+            m.call_ai(self._batch(1), cfg)
+        self.assertGreater(len(calls), 1)
+        self.assertEqual(calls[0]["max_tokens"], 4096)
+        self.assertEqual(calls[1]["max_tokens"], 6000)
 
 
 class _R:
