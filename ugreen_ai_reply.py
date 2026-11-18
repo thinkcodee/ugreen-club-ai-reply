@@ -22,7 +22,7 @@
 
 默认只演练不发帖。确认无误后设置 UGREEN_DRY_RUN=0 才会真正回复。
 
-版本：1.3.0
+版本：1.3.1
 
 许可证：MIT License © 2026 thinkcodee
 （单文件版内附许可证全文见文件末尾）
@@ -30,7 +30,7 @@
 
 from __future__ import annotations
 
-__version__ = "1.3.0"
+__version__ = "1.3.1"
 
 import importlib.util
 import os
