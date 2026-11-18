@@ -434,19 +434,23 @@ class AiConfigTest(unittest.TestCase):
         body = m.ai_request_body([m.Thread(tid="1", title="t")], cfg)
         self.assertEqual(body["max_tokens"], 131072)
 
-    def test_thinking_model_auto_disables_thinking(self):
-        """思考型模型默认关思考；显式配置时听用户的。"""
+    def test_thinking_default_enabled(self):
+        """思考模式默认开启（显式带 enable_thinking=true）；AI_DISABLE_THINKING=1 才关。"""
         cfg = self._cfg({"AI_MODEL": "XingChenAGI/Xing4.0-29B"})
-        self.assertTrue(cfg.ai_disable_thinking)
+        self.assertFalse(cfg.ai_disable_thinking)
         body = m.ai_request_body([m.Thread(tid="1", title="t")], cfg)
-        self.assertFalse(body["enable_thinking"])
+        self.assertTrue(body["enable_thinking"])
 
         cfg2 = self._cfg({"AI_MODEL": "XingChenAGI/Xing4.0-29B",
-                           "AI_DISABLE_THINKING": "0"})
-        self.assertFalse(cfg2.ai_disable_thinking)
+                           "AI_DISABLE_THINKING": "1"})
+        self.assertTrue(cfg2.ai_disable_thinking)
+        body2 = m.ai_request_body([m.Thread(tid="1", title="t")], cfg2)
+        self.assertFalse(body2["enable_thinking"])
 
-        cfg3 = self._cfg({"AI_MODEL": "deepseek-ai/DeepSeek-V3"})
-        self.assertFalse(cfg3.ai_disable_thinking)
+        # AI_EXTRA_BODY 可强制覆盖任一字段
+        cfg3 = self._cfg({"AI_EXTRA_BODY": '{"enable_thinking":false}'})
+        body3 = m.ai_request_body([m.Thread(tid="1", title="t")], cfg3)
+        self.assertFalse(body3["enable_thinking"])
 
     def test_enabled_flag_and_mask(self):
         cfg = self._cfg({"AI_ENABLED": "0", "AI_API_KEY": "sk-abcdefghijkl"})
@@ -1291,6 +1295,36 @@ class CasualMediaSafetyTest(unittest.TestCase):
                                      media="[外链]", media_codes=("[赞]",))
         self.assertTrue(ok2)
         self.assertNotIn("[外链]", out2)
+
+    def test_inline_evidence_ref_stripped(self):
+        """模型把证据编号写进正文时要剥掉，引用关系只走 evidence_used。"""
+        ok, out = m.sanitize_reply(
+            "先确认是否开启了自定义域名功能（kb:919），DH2600 可能存在固件兼容问题。",
+            [], kind="text")
+        self.assertTrue(ok)
+        self.assertNotIn("kb:", out)
+        self.assertNotIn("（", out)
+        self.assertIn("自定义域名功能，DH2600", out)
+        # 半角括号 / 方括号包裹、web 前缀同样剥掉
+        for raw in ("建议先查一下系统日志 (web:ab12cd34ef) 再重启 NAS 试一次。",
+                    "参考 [KB:919] 这篇官方文档里的排查步骤应该就能解决。"):
+            ok2, out2 = m.sanitize_reply(raw, [], kind="text")
+            self.assertTrue(ok2)
+            self.assertNotIn(":", out2)
+
+    def test_photo_placeholder_stripped(self):
+        """[图片] 是编辑器附件占位符，发出去不渲染成图，出现即剥掉。"""
+        ok, out = m.sanitize_reply(
+            "建议回退到更新前版本或联系官方反馈。\n[图片]", [], kind="text")
+        self.assertTrue(ok)
+        self.assertNotIn("[图片]", out)
+        self.assertTrue(out.endswith("反馈。"))
+        self.assertEqual(out, "建议回退到更新前版本或联系官方反馈。")
+
+    def test_media_codes_exclude_image_placeholder(self):
+        """[图片] / [示意图] 不是可渲染的论坛表情码，默认白名单不再包含。"""
+        self.assertNotIn("[图片]", m.DEFAULT_MEDIA_CODES)
+        self.assertNotIn("[示意图]", m.DEFAULT_MEDIA_CODES)
 
     def test_casual_short_reply_allowed(self):
         ok, out = m.sanitize_reply("[哈哈]", [], kind="casual", allow_casual=True)

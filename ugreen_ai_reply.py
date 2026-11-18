@@ -212,8 +212,9 @@ UNSAFE_TOPIC_RE = re.compile(
     r"政治敏感|颠覆国家|分裂国家|恐怖袭击|制毒|制枪|买卖枪支|自残|自杀方法",
 )
 
-# 可选「图文」：只允许白名单里的论坛表情/图片代码，模型不能自由塞外链
-DEFAULT_MEDIA_CODES = ("[赞]", "[图片]", "[示意图]", "[加油]", "[鼓掌]",
+# 可选「图文」：只允许白名单里的论坛表情代码，模型不能自由塞外链。
+# [图片] / [示意图] 是编辑器附件占位符，发出去不渲染成图片，已从白名单移除。
+DEFAULT_MEDIA_CODES = ("[赞]", "[加油]", "[鼓掌]",
                        "[哈哈]", "[谢谢]", "[握手]")
 
 # 检索分级：一手资料优先，明显不够时才动用联网源
@@ -348,8 +349,8 @@ evidence 是关键词模糊检索得到的**候选**资料，可能包含与帖�
   「「Compose」这个写法学到了」。
   answer_mode="learn"、confidence="low"、evidence_used=[]。
   **不要下技术结论、不要提版本号、不要给兼容性断言**，只表达学到 / 欣赏 / 收藏 / 想试。
-- 【图文】需要配图或表情点缀时，可在 media 字段填一个允许的论坛代码（见输入里的 media_codes）。
-  脚本只会附加白名单内的代码，其它一律忽略；不要在 reply 里写图片地址或任何链接。
+- 【图文】需要表情点缀时，可在 media 字段填一个允许的论坛表情代码（见输入里的 media_codes）。
+  脚本只会附加白名单内的代码，其它一律忽略；不要在 reply 里写图片地址、任何链接或 [图片] 占位符。
   适度使用，一条回复最多一个，不得借此刷屏。
 
 【通用要求】
@@ -410,11 +411,23 @@ AI_PROVIDER_PRESETS: dict[str, tuple[str, str]] = {
     "custom": ("", ""),
 }
 
-# 思考型模型：默认把 token 花在 reasoning 上，正文 JSON 反而写不完。
-# 这些模型默认带上 enable_thinking=false，除非用户显式用 AI_DISABLE_THINKING=0 打开。
-THINKING_MODEL_HINTS = ("xing", "qwen3", "qwq", "-r1", "reasoner", "thinking",
-                         "deepseek-v3.1", "deepseek-v3.2", "hunyuan-a13b",
-                         "step-", "glm-4.6", "kimi-k2-thinking")
+# 思考模式默认开启（2026-11 起），不再按模型名自动关闭；
+# AI_DISABLE_THINKING=1 可显式关闭，调用层对不认参数的端点有兜底重试。
+
+# 模型偶尔会把证据编号（kb:919 / web:ab12cd34ef 等）原样写进回复正文，
+# 发帖前一律剥掉；引用关系只走 evidence_used 字段，不出现在正文里。
+INLINE_REF_RE = re.compile(
+    r"\s*[\(（【\[]*\s*(?:kb|site|web|bing|baidu|searx|tavily|custom|ugnas)"
+    r"[:：][0-9a-z]{1,24}\s*[\)）】\]]*",
+    re.I,
+)
+
+# 图片占位代码（[图片] / [示意图] 等）是编辑器里的附件占位符，不是论坛表情码，
+# 发出去也不会渲染成图片；模型把它写进正文时直接剥掉，避免出现「没有图片的图片」。
+PHOTO_PLACEHOLDER_RE = re.compile(
+    r"\s*\[(?:图片|示意图|图像|配图|插图|img|image)\]",
+    re.I,
+)
 
 AI_BASE_ALIASES = (
     "AI_BASE_URL", "UGREEN_AI_BASE_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE",
@@ -1300,15 +1313,11 @@ class Config:
         cfg.ai_json_mode = env_bool("AI_JSON_MODE", True)
         cfg.ai_retries = max(1, min(6, env_int("AI_RETRIES", 3)))
         cfg.ai_batch_fallback = env_bool("AI_BATCH_FALLBACK", True)
-        # 思考型模型默认关掉思考：否则 token 全被 reasoning 吃掉，正文 JSON 写不完。
-        # AI_DISABLE_THINKING 显式写了就听用户的。
-        raw_disable = env_str("AI_DISABLE_THINKING")
-        if raw_disable:
-            cfg.ai_disable_thinking = env_bool("AI_DISABLE_THINKING", True)
-        else:
-            low_model = (cfg.ai_model or "").lower()
-            cfg.ai_disable_thinking = any(
-                h in low_model for h in THINKING_MODEL_HINTS)
+        # 思考模式默认开启（2026-11 起）：实测开启思考后回复质量明显更好，
+        # max_tokens 默认已给到 128K，正文不会被思考过程挤掉；
+        # 服务端不接受大 max_tokens 时调用层会自动去掉该字段重试。
+        # AI_DISABLE_THINKING=1 显式关闭时听用户的。
+        cfg.ai_disable_thinking = env_bool("AI_DISABLE_THINKING", False)
         cfg.ai_headers = parse_kv_mapping(env_str("AI_EXTRA_HEADERS"),
                                           "AI_EXTRA_HEADERS")
         cfg.ai_extra_body = parse_extra_body(env_str("AI_EXTRA_BODY"))
@@ -1346,7 +1355,12 @@ class Config:
         cfg.max_learn = max(0, env_int("UGREEN_MAX_LEARN", 3))
         cfg.allow_media = env_bool("UGREEN_ALLOW_MEDIA", True)
         codes = split_markers(env_str("UGREEN_MEDIA_CODES"), DEFAULT_MEDIA_CODES)
-        cfg.media_codes = tuple(c for c in codes if c.startswith("[") and c.endswith("]"))
+        # [图片]/[示意图] 是编辑器附件占位符，发出去不渲染成图；
+        # 即使用户旧配置里写了也过滤掉，避免出现「没有图片的图片」。
+        cfg.media_codes = tuple(
+            c for c in codes
+            if c.startswith("[") and c.endswith("]")
+            and c not in ("[图片]", "[示意图]", "[图像]", "[配图]", "[插图]"))
         cfg.recheck_replied = env_bool("UGREEN_RECHECK_REPLIED", True)
         cfg.recheck_limit = max(0, env_int("UGREEN_RECHECK_LIMIT", 3))
         cfg.revisit_hours = max(1.0, env_float("UGREEN_REVISIT_HOURS", 168.0))
@@ -2221,6 +2235,13 @@ def sanitize_reply(text: str, recent: list[str],
     """
     s = (text or "").strip().strip('"“”').strip()
     s = re.sub(r"^```.*?$|```", "", s, flags=re.M).strip()
+    # 剥掉泄漏进正文的证据编号（kb:919 / web:ab12…）与图片占位代码（[图片] 等）：
+    # 引用关系只走 evidence_used 字段；[图片] 是编辑器占位符，发出去也不会渲染成图。
+    s = INLINE_REF_RE.sub("", s)
+    s = PHOTO_PLACEHOLDER_RE.sub("", s)
+    s = re.sub(r"[ \t]{2,}", " ", s)
+    s = re.sub(r"\n{3,}", "\n\n", s).strip(" \t　")
+    s = re.sub(r"\s+([，。！？；、])", r"\1", s).strip()
     if not s:
         return False, "空回复"
     if ABUSIVE_RE.search(s) or UNSAFE_TOPIC_RE.search(s):
@@ -2375,9 +2396,12 @@ def ai_request_body(batch: list[Thread], cfg: Config) -> dict:
         body["top_p"] = cfg.ai_top_p
     if cfg.ai_json_mode:
         body["response_format"] = {"type": "json_object"}
-    if cfg.ai_disable_thinking and "enable_thinking" not in body:
-        # 思考型模型：先关掉思考，保证 max_tokens 全给正文
-        body["enable_thinking"] = False
+    # 思考模式默认开启（2026-11 起）：显式带上 enable_thinking=true，
+    # 免得服务端默认关思考导致回复质量下降；端点不认这个参数时
+    # 调用层会自动去掉并重试（见 call_ai 的 400 兜底）。
+    # AI_DISABLE_THINKING=1 显式关闭，保证 max_tokens 全给正文。
+    if "enable_thinking" not in body:
+        body["enable_thinking"] = not cfg.ai_disable_thinking
     body.update(cfg.ai_extra_body)   # 厂商私有参数，或强制覆盖任一字段
     return body
 
@@ -2453,7 +2477,7 @@ def call_ai(batch: list[Thread], cfg: Config) -> Optional[dict]:
                 if meta.get("finish_reason") == "length":
                     # 输出被截断。根因通常不是额度不够，而是思考过程把 token 吃光，
                     # 所以先关思考（治本），再考虑放宽 max_tokens（治标）。
-                    thinking_already_off = "enable_thinking" in body
+                    thinking_already_off = body.get("enable_thinking") is False
                     if not thinking_already_off:
                         body["enable_thinking"] = False
                         # 记住要关思考，后续批次与逐篇重试都沿用
@@ -2475,7 +2499,7 @@ def call_ai(batch: list[Thread], cfg: Config) -> Optional[dict]:
                         log("    输出仍被截断（未限制 max_tokens 且已关闭思考，"
                             "疑似服务端输出上限），本批不再重试，改由逐篇重试拆分")
                         return None
-                if meta.get("reasoning_only") and "enable_thinking" not in body:
+                if meta.get("reasoning_only") and body.get("enable_thinking") is not False:
                     body["enable_thinking"] = False
                     # 记住要关思考，后续批次与逐篇重试都沿用
                     cfg.ai_disable_thinking = True

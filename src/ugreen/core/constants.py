@@ -115,8 +115,9 @@ UNSAFE_TOPIC_RE = re.compile(
     r"政治敏感|颠覆国家|分裂国家|恐怖袭击|制毒|制枪|买卖枪支|自残|自杀方法",
 )
 
-# 可选「图文」：只允许白名单里的论坛表情/图片代码，模型不能自由塞外链
-DEFAULT_MEDIA_CODES = ("[赞]", "[图片]", "[示意图]", "[加油]", "[鼓掌]",
+# 可选「图文」：只允许白名单里的论坛表情代码，模型不能自由塞外链。
+# [图片] / [示意图] 是编辑器附件占位符，发出去不渲染成图片，已从白名单移除。
+DEFAULT_MEDIA_CODES = ("[赞]", "[加油]", "[鼓掌]",
                        "[哈哈]", "[谢谢]", "[握手]")
 
 # 检索分级：一手资料优先，明显不够时才动用联网源
@@ -251,8 +252,8 @@ evidence 是关键词模糊检索得到的**候选**资料，可能包含与帖�
   「「Compose」这个写法学到了」。
   answer_mode="learn"、confidence="low"、evidence_used=[]。
   **不要下技术结论、不要提版本号、不要给兼容性断言**，只表达学到 / 欣赏 / 收藏 / 想试。
-- 【图文】需要配图或表情点缀时，可在 media 字段填一个允许的论坛代码（见输入里的 media_codes）。
-  脚本只会附加白名单内的代码，其它一律忽略；不要在 reply 里写图片地址或任何链接。
+- 【图文】需要表情点缀时，可在 media 字段填一个允许的论坛表情代码（见输入里的 media_codes）。
+  脚本只会附加白名单内的代码，其它一律忽略；不要在 reply 里写图片地址、任何链接或 [图片] 占位符。
   适度使用，一条回复最多一个，不得借此刷屏。
 
 【通用要求】
@@ -313,11 +314,23 @@ AI_PROVIDER_PRESETS: dict[str, tuple[str, str]] = {
     "custom": ("", ""),
 }
 
-# 思考型模型：默认把 token 花在 reasoning 上，正文 JSON 反而写不完。
-# 这些模型默认带上 enable_thinking=false，除非用户显式用 AI_DISABLE_THINKING=0 打开。
-THINKING_MODEL_HINTS = ("xing", "qwen3", "qwq", "-r1", "reasoner", "thinking",
-                         "deepseek-v3.1", "deepseek-v3.2", "hunyuan-a13b",
-                         "step-", "glm-4.6", "kimi-k2-thinking")
+# 思考模式默认开启（2026-11 起），不再按模型名自动关闭；
+# AI_DISABLE_THINKING=1 可显式关闭，调用层对不认参数的端点有兜底重试。
+
+# 模型偶尔会把证据编号（kb:919 / web:ab12cd34ef 等）原样写进回复正文，
+# 发帖前一律剥掉；引用关系只走 evidence_used 字段，不出现在正文里。
+INLINE_REF_RE = re.compile(
+    r"\s*[\(（【\[]*\s*(?:kb|site|web|bing|baidu|searx|tavily|custom|ugnas)"
+    r"[:：][0-9a-z]{1,24}\s*[\)）】\]]*",
+    re.I,
+)
+
+# 图片占位代码（[图片] / [示意图] 等）是编辑器里的附件占位符，不是论坛表情码，
+# 发出去也不会渲染成图片；模型把它写进正文时直接剥掉，避免出现「没有图片的图片」。
+PHOTO_PLACEHOLDER_RE = re.compile(
+    r"\s*\[(?:图片|示意图|图像|配图|插图|img|image)\]",
+    re.I,
+)
 
 AI_BASE_ALIASES = (
     "AI_BASE_URL", "UGREEN_AI_BASE_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE",

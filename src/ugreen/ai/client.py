@@ -107,9 +107,12 @@ def ai_request_body(batch: list[Thread], cfg: Config) -> dict:
         body["top_p"] = cfg.ai_top_p
     if cfg.ai_json_mode:
         body["response_format"] = {"type": "json_object"}
-    if cfg.ai_disable_thinking and "enable_thinking" not in body:
-        # 思考型模型：先关掉思考，保证 max_tokens 全给正文
-        body["enable_thinking"] = False
+    # 思考模式默认开启（2026-11 起）：显式带上 enable_thinking=true，
+    # 免得服务端默认关思考导致回复质量下降；端点不认这个参数时
+    # 调用层会自动去掉并重试（见 call_ai 的 400 兜底）。
+    # AI_DISABLE_THINKING=1 显式关闭，保证 max_tokens 全给正文。
+    if "enable_thinking" not in body:
+        body["enable_thinking"] = not cfg.ai_disable_thinking
     body.update(cfg.ai_extra_body)   # 厂商私有参数，或强制覆盖任一字段
     return body
 
@@ -185,7 +188,7 @@ def call_ai(batch: list[Thread], cfg: Config) -> Optional[dict]:
                 if meta.get("finish_reason") == "length":
                     # 输出被截断。根因通常不是额度不够，而是思考过程把 token 吃光，
                     # 所以先关思考（治本），再考虑放宽 max_tokens（治标）。
-                    thinking_already_off = "enable_thinking" in body
+                    thinking_already_off = body.get("enable_thinking") is False
                     if not thinking_already_off:
                         body["enable_thinking"] = False
                         # 记住要关思考，后续批次与逐篇重试都沿用
@@ -207,7 +210,7 @@ def call_ai(batch: list[Thread], cfg: Config) -> Optional[dict]:
                         log("    输出仍被截断（未限制 max_tokens 且已关闭思考，"
                             "疑似服务端输出上限），本批不再重试，改由逐篇重试拆分")
                         return None
-                if meta.get("reasoning_only") and "enable_thinking" not in body:
+                if meta.get("reasoning_only") and body.get("enable_thinking") is not False:
                     body["enable_thinking"] = False
                     # 记住要关思考，后续批次与逐篇重试都沿用
                     cfg.ai_disable_thinking = True

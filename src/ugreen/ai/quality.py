@@ -16,7 +16,9 @@ from ..core.constants import (
     BAD_REPLY_RE,
     CLICHE_REPLIES,
     EMOJI_PATTERN,
+    INLINE_REF_RE,
     LOCAL_FALLBACK_RULES,
+    PHOTO_PLACEHOLDER_RE,
     RISK_CLAIM_RE,
     UNSAFE_TOPIC_RE,
     VERSION_RE,
@@ -74,6 +76,13 @@ def sanitize_reply(text: str, recent: list[str],
     """
     s = (text or "").strip().strip('"“”').strip()
     s = re.sub(r"^```.*?$|```", "", s, flags=re.M).strip()
+    # 剥掉泄漏进正文的证据编号（kb:919 / web:ab12…）与图片占位代码（[图片] 等）：
+    # 引用关系只走 evidence_used 字段；[图片] 是编辑器占位符，发出去也不会渲染成图。
+    s = INLINE_REF_RE.sub("", s)
+    s = PHOTO_PLACEHOLDER_RE.sub("", s)
+    s = re.sub(r"[ \t]{2,}", " ", s)
+    s = re.sub(r"\n{3,}", "\n\n", s).strip(" \t　")
+    s = re.sub(r"\s+([，。！？；、])", r"\1", s).strip()
     if not s:
         return False, "空回复"
     if ABUSIVE_RE.search(s) or UNSAFE_TOPIC_RE.search(s):

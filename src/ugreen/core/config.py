@@ -33,7 +33,6 @@ from .constants import (
     KB_DEFAULT_LANGUAGE,
     SCRIPT_DIR,
     SYSTEM_PROMPT,
-    THINKING_MODEL_HINTS,
 )
 
 from .models import (
@@ -251,15 +250,11 @@ class Config:
         cfg.ai_json_mode = env_bool("AI_JSON_MODE", True)
         cfg.ai_retries = max(1, min(6, env_int("AI_RETRIES", 3)))
         cfg.ai_batch_fallback = env_bool("AI_BATCH_FALLBACK", True)
-        # 思考型模型默认关掉思考：否则 token 全被 reasoning 吃掉，正文 JSON 写不完。
-        # AI_DISABLE_THINKING 显式写了就听用户的。
-        raw_disable = env_str("AI_DISABLE_THINKING")
-        if raw_disable:
-            cfg.ai_disable_thinking = env_bool("AI_DISABLE_THINKING", True)
-        else:
-            low_model = (cfg.ai_model or "").lower()
-            cfg.ai_disable_thinking = any(
-                h in low_model for h in THINKING_MODEL_HINTS)
+        # 思考模式默认开启（2026-11 起）：实测开启思考后回复质量明显更好，
+        # max_tokens 默认已给到 128K，正文不会被思考过程挤掉；
+        # 服务端不接受大 max_tokens 时调用层会自动去掉该字段重试。
+        # AI_DISABLE_THINKING=1 显式关闭时听用户的。
+        cfg.ai_disable_thinking = env_bool("AI_DISABLE_THINKING", False)
         cfg.ai_headers = parse_kv_mapping(env_str("AI_EXTRA_HEADERS"),
                                           "AI_EXTRA_HEADERS")
         cfg.ai_extra_body = parse_extra_body(env_str("AI_EXTRA_BODY"))
@@ -297,7 +292,12 @@ class Config:
         cfg.max_learn = max(0, env_int("UGREEN_MAX_LEARN", 3))
         cfg.allow_media = env_bool("UGREEN_ALLOW_MEDIA", True)
         codes = split_markers(env_str("UGREEN_MEDIA_CODES"), DEFAULT_MEDIA_CODES)
-        cfg.media_codes = tuple(c for c in codes if c.startswith("[") and c.endswith("]"))
+        # [图片]/[示意图] 是编辑器附件占位符，发出去不渲染成图；
+        # 即使用户旧配置里写了也过滤掉，避免出现「没有图片的图片」。
+        cfg.media_codes = tuple(
+            c for c in codes
+            if c.startswith("[") and c.endswith("]")
+            and c not in ("[图片]", "[示意图]", "[图像]", "[配图]", "[插图]"))
         cfg.recheck_replied = env_bool("UGREEN_RECHECK_REPLIED", True)
         cfg.recheck_limit = max(0, env_int("UGREEN_RECHECK_LIMIT", 3))
         cfg.revisit_hours = max(1.0, env_float("UGREEN_REVISIT_HOURS", 168.0))

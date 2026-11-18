@@ -191,7 +191,7 @@ https://api.deepseek.com/v1/chat/completions      → 去掉尾部再拼，不�
 | `AI_RETRIES` | `3` | 失败/JSON 解析失败重试次数（1~6） |
 | `AI_JSON_MODE` | `1` | 请求 `response_format=json_object`；端点返回 400 不支持时自动去掉并重试 |
 | `AI_BATCH_FALLBACK` | `1` | 整批解析失败时对缺失的帖子逐篇重试，避免一批帖子被静默丢掉 |
-| `AI_DISABLE_THINKING` | 自动 | 设 `1`/`0` 强制开关；**不设时按模型名自动判断**：Xing / Qwen3 / R1 等思考型模型默认带上 `enable_thinking=false`，避免 token 全被思考过程吃掉 |
+| `AI_DISABLE_THINKING` | `0` | **思考模式默认开启**（显式带 `enable_thinking=true`）；设 `1` 关闭思考、保证 max_tokens 全给正文；端点不认该参数时脚本会自动去掉并重试 |
 | `AI_ENABLED` | `1` | `0` 关闭 AI；实发模式下会拒绝发帖（防止用模板灌水） |
 | `AI_EXTRA_BODY` | `{}` | JSON 对象，追加厂商私有参数或覆盖任一请求字段 |
 | `AI_EXTRA_HEADERS` | `{}` | JSON 对象或 `K: V; K2: V2`，用于 OpenRouter 等需要额外头的平台 |
@@ -254,7 +254,7 @@ python ugreen_ai_reply.py --test-ai
 | `UGREEN_ALLOW_LEARN_REPLY` | `1` | 分享帖 / 自荐帖 / 教程帖允许回「学习、点赞」型回应 |
 | `UGREEN_MAX_LEARN` | `3` | 每次运行最多几条学习点赞型回复，防止刷屏 |
 | `UGREEN_ALLOW_MEDIA` | `1` | 是否允许附带论坛表情 / 图片代码 |
-| `UGREEN_MEDIA_CODES` | `[赞],[图片],[示意图],[加油],[鼓掌],[哈哈],[谢谢],[握手]` | **白名单**：模型只能填这里面的代码，其它一律丢弃，绝不允许自由塞图片链接 |
+| `UGREEN_MEDIA_CODES` | `[赞],[加油],[鼓掌],[哈哈],[谢谢],[握手]` | **白名单**：模型只能填这里面的论坛表情代码，其它一律丢弃，绝不允许自由塞图片链接；`[图片]` 是编辑器附件占位符、发出去不渲染成图，已从默认白名单移除 |
 | `UGREEN_LOG_TITLE_CHARS` | `0` | 日志里「最新：xxx」那行的标题显示长度；`0` = 完整显示，截断时带 `…` |
 
 **重访的判定逻辑**：已回复过的帖子默认不再回复。只有命中下面任一触发条件才会重新进入模型判断，并且新回复若与上次内容高度相似会被本地硬闸拦掉：
@@ -508,7 +508,7 @@ UGREEN_USE_GUIDE=0
 
 `format="steps"` 时模型会用 `1. … 2. … 3. …` 或换行分点写多步操作，报告里会标「分步」；单段说明用 `"plain"`。
 
-`media` 是**可选的论坛表情 / 图片代码**，且必须落在 `UGREEN_MEDIA_CODES` 白名单里（默认 `[赞] [图片] [示意图] [加油] [鼓掌] [哈哈] [谢谢] [握手]`）。白名单之外的代码会被直接丢弃，**模型无法自由塞任何图片链接**。每条回复最多带一个。
+`media` 是**可选的论坛表情代码**，且必须落在 `UGREEN_MEDIA_CODES` 白名单里（默认 `[赞] [加油] [鼓掌] [哈哈] [谢谢] [握手]`）。白名单之外的代码会被直接丢弃，**模型无法自由塞任何图片链接**。每条回复最多带一个。`[图片]` / `[示意图]` 是编辑器附件占位符、发出去不会渲染成图片，已从默认白名单移除；模型把它写进回复正文时也会被自动剥掉。
 
 ### A / B / C：楼层、证据与事实约束
 
@@ -569,7 +569,7 @@ Discuz 模板不同，成功文案可能变化。设 `UGREEN_DEBUG=1` 看响应�
 1. **JSON 前面带了一段说明文字**，或套了 ` ```json ` 围栏 → 现在会先剥围栏、再扫描第一组配平的 `{ }` / `[ ]` 抠出 JSON；
 2. **token 全花在思考过程上，正文是空的**（`finish_reason=length`）→ 检测到这种情况会自动放宽 `max_tokens`、并在下一轮带上 `enable_thinking=false`。
 
-失败时日志会打印 `finish_reason`、正文长度和**原始返回片段**，照着看就能定位。若你的模型支持关思考，建议直接设 `AI_DISABLE_THINKING=1`；端点不认这个参数时脚本会自动去掉并继续。整批失败后还会对缺失的帖子逐篇重试（`AI_BATCH_FALLBACK=1`），不会再整批丢掉。
+失败时日志会打印 `finish_reason`、正文长度和**原始返回片段**，照着看就能定位。思考模式默认开启（显式带 `enable_thinking=true`）；若你的模型不支持思考或 token 被思考吃光，设 `AI_DISABLE_THINKING=1` 关闭；端点不认这个参数时脚本会自动去掉并继续。整批失败后还会对缺失的帖子逐篇重试（`AI_BATCH_FALLBACK=1`），不会再整批丢掉。
 
 老版本如果连 `response_format` 都不支持，设 `AI_JSON_MODE=0`。
 
@@ -579,7 +579,7 @@ Discuz 模板不同，成功文案可能变化。设 `UGREEN_DEBUG=1` 看响应�
 - 默认 `AI_MAX_TOKENS=131072`（128K），`AI_MAX_TOKENS_CAP=1048576`（1M）是自适应放宽的天花板；
 - **`AI_MAX_TOKENS=0` 表示完全不限制** —— 请求体里干脆不带 `max_tokens` 字段，由服务端按模型自身上限决定；
 - 万一服务端嫌这个数太大返回 400，脚本会自动去掉该字段并重试（并把后续批次也切成不限制）；
-- 若日志里 `finish_reason=length` 且原始片段是英文长篇分析（如 "Let me analyze each post one by one"），说明那是**思考过程**不是正文。脚本已按模型名自动关思考（Xing / Qwen3 / R1 等），你也可以用 `AI_DISABLE_THINKING=1` 强制；单纯调大 `max_tokens` 只会让它思考得更久。
+- 若日志里 `finish_reason=length` 且原始片段是英文长篇分析（如 "Let me analyze each post one by one"），说明那是**思考过程**不是正文。思考模式默认开启，token 被思考吃光时脚本会自动关思考并放宽 `max_tokens`；你也可以用 `AI_DISABLE_THINKING=1` 强制关闭。
 
 **Q：日志里「最新：xxx」的标题被截断了吗？**
 帖子标题本身一直是完整的，截断只发生在**日志展示层**。现在默认**完整显示**；确实嫌长可设 `UGREEN_LOG_TITLE_CHARS=40`，截断处会带 `…`，一眼能看出是显示层截断而不是标题就这么短。
