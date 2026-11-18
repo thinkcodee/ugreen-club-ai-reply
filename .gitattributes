@@ -1,19 +1,5 @@
-# 统一换行符：仓库内一律用 LF，避免 Windows 开发与 Linux CI/部署产生差异。
-# Python 源码、YAML、Markdown 一律 LF。
-* text=auto eol=lf
-
-*.py    text eol=lf
-*.yml   text eol=lf
-*.yaml  text eol=lf
-*.md    text eol=lf
-*.toml  text eol=lf
-*.txt   text eol=lf
-*.env   text eol=lf
-
-# 二进制文件不做换行转换
-*.png  binary
-*.jpg  binary
-*.jpeg binary
-*.gif  binary
-*.ico  binary
-*.pyc  binary
+*.py text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+*.env text eol=lf
